@@ -2,7 +2,8 @@
 
 Edit workflows in your local ComfyUI, run them on a RunPod Serverless GPU. Progress and results show up in your local GUI, and you don't need the models locally.
 
-You need a [RunPod](https://www.runpod.io) account, an S3-compatible bucket such as [Cloudflare R2](https://developers.cloudflare.com/r2/), and a GitHub account.
+You need a [RunPod](https://runpod.io?ref=hhaqe53o) account, an S3-compatible bucket such as [Cloudflare R2](https://developers.cloudflare.com/r2/), and a GitHub account.
+If you register to RunPod with this link and deposit $10, we both get $5.
 
 ## Setup
 
@@ -29,9 +30,10 @@ To get plugin updates later: `git pull upstream main`, then `git push`. A public
 
 In the plugin folder, copy `.env.example` to `.env`, then:
 
-1. In RunPod, create an API key with read/write access (Credentials → Create API Key → Serverless endpoints → tick read and write → Create).
-2. Create a bucket, e.g. in Cloudflare R2, and an API token with read/write access to it (R2: "Object Read & Write").
-3. Add lifecycle rules to the bucket that delete `inputs/` after 1 day and `outputs/` after 7 days.
+1. If you don't have a RunPod account yet, sign up with [this link](https://runpod.io?ref=hhaqe53o) (if you register with it and deposit $10, we both get $5).
+2. In RunPod, create an API key with read/write access (Credentials → Create API Key → Serverless endpoints → tick read and write → Create).
+3. Create a bucket, e.g. in Cloudflare R2, and an API token with read/write access to it (R2: "Object Read & Write").
+4. Add lifecycle rules to the bucket that delete `inputs/` after 1 day and `outputs/` after 7 days.
 
 Fill in `.env`:
 
