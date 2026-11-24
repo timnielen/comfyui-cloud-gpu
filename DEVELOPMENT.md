@@ -1,0 +1,90 @@
+# Development
+
+How comfy_cloud_run works inside. For setup, see [README.md](README.md).
+
+## Layout
+
+| Path | Runs on | Purpose |
+|---|---|---|
+| `__init__.py` | local ComfyUI | Reads `.env`, registers `POST /cloud/prompt`, installs the cancel hooks |
+| `cloud.py` | local ComfyUI | RunPod and R2 client; replays the cloud job's events on the local server |
+| `worker/handler.py` | RunPod worker | Starts ComfyUI, runs one prompt per job, streams its events |
+| `tools/gen_dockerfile.py` | your machine | `manifest.json` → `Dockerfile`; `--pin-local` pins the local ComfyUI commit |
+| `endpoints/<name>/` | – | One RunPod endpoint: `manifest.json` and the generated `Dockerfile` |
+
+The plugin loads on the worker too, because the image copies it into `custom_nodes/`. Without `.env` it only registers a route that answers "not configured", and installs no hooks.
+
+## Image
+
+Built by RunPod with this repo as build context. Layer order: base → models (one layer each) → torch cu130 → ComfyUI at the pinned commit → its requirements → worker requirements → custom nodes (one layer each) → `pip` pins → plugin code. A code or dependency change never re-downloads the models. Whether RunPod's builder reuses cached layers between builds isn't verified.
+
+## Job protocol
+
+`/run` input:
+
+```json
+{"prompt_id": "<uuid>", "prompt": {"...": "API prompt"},
+ "extra_data": {"extra_pnginfo": {"workflow": {}}},
+ "inputs": [{"path": "sub/face.png", "url": "<presigned GET>"}]}
+```
+
+The handler is an async generator, and every yield is a list of events, read through `/stream`:
+
+- `{"type": "rejected", "error", "node_errors"}`: the worker's ComfyUI returned 400 for the prompt.
+- `{"type": "accepted", "node_errors"}`
+- `{"type": "<ComfyUI websocket event>", "data": {...}}`: only events for this `prompt_id`, batched for 0.5 s. `executed` events also carry `"files": [{"filename", "subfolder", "type", "url"}]`, uploaded to R2 under `outputs/<prompt_id>/...`.
+- The stream ends after `{"type": "executing", "data": {"node": null}}`.
+
+Worker details:
+- ComfyUI starts once per worker and restarts if it died.
+- Inputs are downloaded before each job and deleted after it.
+- Outputs stay on disk, because a cached output node re-sends `executed` for the existing file.
+- If the generator is closed early (cancel, timeout), the handler deletes the prompt from the worker's queue and interrupts it.
+
+## Local backend
+
+`POST /cloud/prompt` accepts the `/prompt` body, plus an optional `cloud_endpoint` (an endpoint folder name; the default is the first one):
+
+1. Runs the `on_prompt` handlers and node replacements, like `/prompt`.
+2. Finds input files: string inputs that resolve via `folder_paths.get_annotated_filepath` to a file inside the input directory. Each is uploaded to `inputs/<sha256><ext>`, skipped if that key already exists.
+3. Submits to RunPod `/run` and puts `(number, prompt_id, prompt, extra_data, [], {})` into `prompt_queue.currently_running` under the key `prompt_id`. The queue panel, `/queue` and `/api/jobs` then show the job.
+4. A background task polls `/stream` every second. It retries on 429, 5xx and connection errors, and replays events with `send_sync(..., client_id)`. The job's `workflow_id` is merged into every event, so a concurrently running local prompt can't override it.
+5. `executed`: files are downloaded into the same type and subfolder locally first. If the name is taken, it becomes `<stem>_<prompt id[:8]><ext>`. The event is rewritten to the local names.
+6. At the end it calls `task_done` with the recorded status messages, then sends `executing {node: null}`, the same order as a local run. If no end event came, it records one itself: `execution_interrupted` for `CANCELLED`, otherwise `execution_error` with the RunPod error.
+
+`rejected` is sent to the browser as `cloud_prompt_rejected {prompt_id, error, node_errors}`, and recorded in history as an error.
+
+### Cancelling
+
+A cloud job sits in `currently_running`, so core's cancel paths would otherwise match it and interrupt the *local* prompt. Two hooks prevent this:
+- `prompt_queue.interrupt_if_running` is wrapped; the `/api/jobs` cancel routes use it.
+- A middleware handles `POST /interrupt` with a cloud `prompt_id`, because that route checks running jobs itself.
+
+Both call RunPod `/cancel`.
+
+## Tests
+
+```bash
+pytest tests
+```
+
+`tests/pytest.ini` keeps pytest from importing the plugin package, which only works inside ComfyUI.
+
+The worker can be tested without the GUI:
+
+```bash
+set -a; source .env; set +a
+ENDPOINT_ID=$(python3 -c 'import json; print(json.load(open("endpoints/h3/manifest.json"))["endpoint_id"])')
+curl -s https://api.runpod.ai/v2/$ENDPOINT_ID/run \
+  -H "Authorization: Bearer $RUNPOD_API_KEY" -H "Content-Type: application/json" \
+  -d "{\"input\": {\"prompt_id\": \"$(uuidgen | tr A-Z a-z)\", \"prompt\": $(cat workflow_api.json)}}"
+curl -s https://api.runpod.ai/v2/$ENDPOINT_ID/stream/<job id> -H "Authorization: Bearer $RUNPOD_API_KEY"
+```
+
+`prompt_id` must be a lowercase UUID. `workflow_api.json` comes from **Workflow → Export (API)**.
+
+## Not verified against the real services
+
+- The `/stream` response shape `{"status", "stream": [{"output": ...}]}`: taken from the official `runpod` SDK, because the docs don't show it fully.
+- Whether RunPod's `/cancel` closes the generator, which is what triggers the worker's interrupt.
+- R2 itself: tests used moto as the S3 server.

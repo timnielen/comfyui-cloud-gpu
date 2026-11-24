@@ -1,7 +1,7 @@
 """RunPod serverless handler: runs this repo's ComfyUI and streams its websocket events.
 
 Job input:
-  {"prompt_id": "<uuid>", "prompt": {...API prompt...},
+  {"prompt_id": "<uuid>", "prompt": {...API prompt...}, "extra_data": {"extra_pnginfo": {...}},
    "inputs": [{"path": "sub/name.png", "url": "<presigned GET>"}]}
 
 Every yield is a list of events, read through RunPod's /stream:
@@ -120,11 +120,11 @@ async def prompt_events(ws, prompt_id):
             deadline = time.monotonic() + BATCH_SECONDS
 
 
-async def run_prompt(session, prompt_id, prompt):
+async def run_prompt(session, prompt_id, prompt, extra_data):
     client_id = uuid.uuid4().hex
     # Connect before queueing so no event of this prompt is missed.
     async with session.ws_connect(f"{COMFY_URL}/ws?clientId={client_id}", max_msg_size=0) as ws:
-        async with session.post(COMFY_URL + "/prompt", json={"prompt": prompt, "prompt_id": prompt_id, "client_id": client_id}) as r:
+        async with session.post(COMFY_URL + "/prompt", json={"prompt": prompt, "prompt_id": prompt_id, "client_id": client_id, "extra_data": extra_data}) as r:
             body = await r.json()
         if r.status != 200:
             yield [{"type": "rejected", "error": body.get("error"), "node_errors": body.get("node_errors", {})}]
@@ -149,7 +149,7 @@ async def handler(job):
         inputs = [local_path("input", "", item["path"]) for item in inp.get("inputs", [])]
         try:
             await asyncio.gather(*(download(session, item["url"], path) for item, path in zip(inp.get("inputs", []), inputs)))
-            async with contextlib.aclosing(run_prompt(session, inp["prompt_id"], inp["prompt"])) as batches:
+            async with contextlib.aclosing(run_prompt(session, inp["prompt_id"], inp["prompt"], inp.get("extra_data", {}))) as batches:
                 async for batch in batches:
                     yield batch
         finally:
