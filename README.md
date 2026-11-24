@@ -86,9 +86,11 @@ Models are downloaded before anything else in the image, so a ComfyUI, torch or 
 
 ## Testing the worker
 
-Send an API-format workflow (ComfyUI: **Workflow → Export (API)**) to the endpoint:
+Send an API-format workflow (ComfyUI: **Workflow → Export (API)**) to the endpoint, from the plugin folder:
 
 ```bash
+set -a; source .env; set +a   # export the variables in .env
+ENDPOINT_ID=$(python3 -c 'import json; print(json.load(open("endpoints/h3/manifest.json"))["endpoint_id"])')
 curl -s https://api.runpod.ai/v2/$ENDPOINT_ID/run \
   -H "Authorization: Bearer $RUNPOD_API_KEY" -H "Content-Type: application/json" \
   -d "{\"input\": {\"prompt_id\": \"$(uuidgen | tr A-Z a-z)\", \"prompt\": $(cat workflow_api.json)}}"
