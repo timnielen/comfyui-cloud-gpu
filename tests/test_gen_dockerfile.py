@@ -1,0 +1,36 @@
+import json
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
+from gen_dockerfile import dockerfile, format_manifest
+
+MANIFEST = {
+    "endpoint_id": "",
+    "comfyui": {"url": "https://github.com/Comfy-Org/ComfyUI", "commit": "c0ffee"},
+    "custom_nodes": [{"url": "https://github.com/a/NodePack.git", "commit": "abc123"}, {"url": "https://github.com/b/Other/"}],
+    "pip": ["transformers<5"],
+    "models": [{"name": "it's.safetensors", "directory": "vae", "url": "https://example.com/m?x=1&y=2"}],
+}
+
+
+def test_layer_order():
+    text = dockerfile(MANIFEST)
+    order = [text.index(s) for s in ("curl -fsSL", "pip install torch", "fetch -q --depth 1 https://github.com/Comfy-Org/ComfyUI c0ffee",
+                                      "pip install -r requirements.txt", "custom_nodes/NodePack", "COPY . /comfyui/custom_nodes/comfy_cloud_run")]
+    assert order == sorted(order)
+    assert text.rstrip().endswith('CMD ["python", "custom_nodes/comfy_cloud_run/worker/handler.py"]')
+
+
+def test_quoting_and_pinning():
+    text = dockerfile(MANIFEST)
+    assert "-o 'vae/it'\"'\"'s.safetensors' 'https://example.com/m?x=1&y=2'" in text
+    assert "fetch -q --depth 1 https://github.com/a/NodePack.git abc123" in text
+    assert "git clone -q --depth 1 https://github.com/b/Other/ custom_nodes/Other" in text
+    assert "RUN pip install 'transformers<5'" in text
+
+
+def test_format_manifest_round_trips():
+    text = format_manifest(MANIFEST)
+    assert json.loads(text) == MANIFEST
+    assert '\n    {"url": "https://github.com/a/NodePack.git", "commit": "abc123"},\n' in text
