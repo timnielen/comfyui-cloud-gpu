@@ -8,7 +8,7 @@ How comfy_cloud_run works inside. For setup, see [README.md](README.md).
 |---|---|---|
 | `__init__.py` | local ComfyUI | Reads `.env`, registers `POST /cloud/prompt`, installs the cancel hooks |
 | `cloud.py` | local ComfyUI | RunPod and R2 client; replays the cloud job's events on the local server |
-| `validate.py` | local ComfyUI | Validates a prompt against an endpoint's manifest before anything is submitted |
+| `validate.py` | local ComfyUI | Model lists for the cloud: validation against a manifest, cloud models in the GUI's dropdowns |
 | `web/cloud_run.js` | browser | Run on Cloud button, Alt+Enter command |
 | `worker/handler.py` | RunPod worker | Starts ComfyUI, runs one prompt per job, streams its events |
 | `tools/gen_dockerfile.py` | your machine | `manifest.json` → `Dockerfile`; `--pin-local` pins the local ComfyUI commit |
@@ -62,6 +62,8 @@ Worker details:
 - `folder_paths.get_filename_list` is replaced by a wrapper. While the `manifest_models` ContextVar is set, it returns the manifest's names for model folders (everything except `configs` and `custom_nodes`).
 - The variable is only set inside the cloud request's task, so local dropdowns and local runs never see manifest models.
 - Missing models therefore give the same `value_not_in_list` errors as a local run.
+
+The same wrapper adds cloud models to the dropdowns. A middleware sets the `listed_models` ContextVar for `/object_info` requests (the only source of the frontend's combo values), and model folders then list local files plus the models of all endpoint manifests. The manifests are read on every request, so edits show after a GUI reload. Everything else still sees only local files: local `/prompt` validation, loaders, `/models/<folder>` and the model library (`/experiment/models`). A local Run with a cloud-only model therefore fails validation instead of failing to open a file.
 
 Before that, any node whose `RELATIVE_PYTHON_MODULE` is `custom_nodes.<pack>` fails with `cloud_missing_node_pack` if `<pack>` doesn't match a manifest repo name (case-insensitive). The check needs custom nodes installed locally, as editing a workflow does anyway.
 

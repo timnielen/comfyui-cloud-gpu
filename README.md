@@ -45,6 +45,8 @@ In the plugin folder, copy `.env.example` to `.env` and fill it in:
 
 Press **Run on Cloud** next to the Run button, or **Alt+Enter**. The run shows up in the queue like a local one, and outputs are saved to your local `output/` folder. You can run locally and in the cloud at the same time.
 
+Model dropdowns also list the models of your cloud endpoints, so you can pick them without having them locally. A local Run with such a model reports it as missing.
+
 Before anything is sent, the workflow is checked against the endpoint's manifest. Models or node packs the cloud image doesn't have are marked on the nodes, as they would be for a local run, and no worker is started.
 
 ## Changing what's in the cloud

@@ -6,7 +6,8 @@ import os
 from aiohttp import web
 
 from server import PromptServer
-from .cloud import PLUGIN_DIR, CloudRun, error_response
+from .cloud import PLUGIN_DIR, CloudRun, endpoint_names, error_response, load_manifest
+from .validate import listed_models, model_lists
 
 ENV_KEYS = ("RUNPOD_API_KEY", "BUCKET_ENDPOINT", "BUCKET_NAME", "BUCKET_KEY", "BUCKET_SECRET")
 ENV_FILE = os.path.join(PLUGIN_DIR, ".env")
@@ -58,6 +59,19 @@ if cloud is not None:
         return await handler(request)
 
     server.app.middlewares.append(cloud_interrupt)
+
+    @web.middleware
+    async def cloud_model_lists(request, handler):
+        # The GUI's model dropdowns also offer the models of every cloud endpoint. Read per request, so manifest edits show on reload.
+        if not request.path.removeprefix("/api").startswith("/object_info"):
+            return await handler(request)
+        token = listed_models.set(model_lists(*(load_manifest(name) for name in endpoint_names())))
+        try:
+            return await handler(request)
+        finally:
+            listed_models.reset(token)
+
+    server.app.middlewares.append(cloud_model_lists)
 
 
 @server.routes.post("/cloud/prompt")

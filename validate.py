@@ -1,4 +1,4 @@
-"""Validate a prompt for a cloud endpoint: ComfyUI's own validation, with model lists read from the endpoint's manifest."""
+"""Model lists for the cloud: validation against an endpoint's manifest, and the manifests' models in the GUI's dropdowns."""
 import contextvars
 
 import execution
@@ -8,20 +8,35 @@ import nodes
 NOT_MODEL_FOLDERS = {"configs", "custom_nodes"}
 CORE_FILE_NODES = {"websocket_image_save"}  # shipped in ComfyUI's own custom_nodes folder, so the image has it too
 
-manifest_models = contextvars.ContextVar("manifest_models", default=None)
+manifest_models = contextvars.ContextVar("manifest_models", default=None)  # set while validating for an endpoint
+listed_models = contextvars.ContextVar("listed_models", default=None)  # set while answering the GUI's model lists
 local_filename_list = folder_paths.get_filename_list
 
 
 def get_filename_list(folder_name):
-    """Inside a cloud validation, model folders list the manifest's models instead of local files."""
-    models = manifest_models.get()
+    """Model folders list the manifest's models while validating for the cloud, and local plus cloud models for the GUI."""
     folder_name = folder_paths.map_legacy(folder_name)
-    if models is None or folder_name in NOT_MODEL_FOLDERS:
+    if folder_name in NOT_MODEL_FOLDERS:
         return local_filename_list(folder_name)
-    return models.get(folder_name, [])
+    models = manifest_models.get()
+    if models is not None:
+        return models.get(folder_name, [])
+    listed = listed_models.get()
+    if listed is None:
+        return local_filename_list(folder_name)
+    return sorted(set(local_filename_list(folder_name)) | set(listed.get(folder_name, [])))
 
 
 folder_paths.get_filename_list = get_filename_list
+
+
+def model_lists(*manifests):
+    """{model folder: [names]} for the given manifests."""
+    models = {}
+    for manifest in manifests:
+        for model in manifest["models"]:
+            models.setdefault(folder_paths.map_legacy(model["directory"]), []).append(model["name"])
+    return models
 
 
 def missing_node_packs(prompt, manifest, endpoint):
@@ -46,10 +61,7 @@ async def validate_cloud_prompt(prompt_id, prompt, partial_execution_targets, ma
         details = ", ".join(sorted({e["errors"][0]["details"].split(":")[0] for e in node_errors.values()}))
         error = {"type": "prompt_outputs_failed_validation", "message": "Node packs missing in the cloud image", "details": details, "extra_info": {}}
         return False, error, [], node_errors
-    models = {}
-    for model in manifest["models"]:
-        models.setdefault(folder_paths.map_legacy(model["directory"]), []).append(model["name"])
-    token = manifest_models.set(models)
+    token = manifest_models.set(model_lists(manifest))
     try:
         return await execution.validate_prompt(prompt_id, prompt, partial_execution_targets)
     finally:
