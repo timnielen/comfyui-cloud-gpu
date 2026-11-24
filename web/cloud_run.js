@@ -78,7 +78,7 @@ function sync() {
   setIfChanged(runButton, "className", run.className);
   setIfChanged(menuButton, "className", trigger.className);
   setIfChanged(menuButton, "innerHTML", trigger.innerHTML);
-  setIfChanged(label, "textContent", cloud.selected ? `Run · ${cloud.selected}` : "Run");
+  setIfChanged(label, "textContent", cloud.selected ? `Cloud · ${cloud.selected}` : "Cloud");
   setIfChanged(cancelButton, "className", `${BUTTON} ${cloud.running.length ? VARIANT.destructive : VARIANT.secondary} size-8 rounded-lg`);
   setIfChanged(cancelButton, "disabled", !cloud.running.length);
   const interrupt = [...row.children].find((child) => child.contains(run))?.nextElementSibling;
