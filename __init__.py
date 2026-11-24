@@ -7,7 +7,7 @@ from aiohttp import web
 
 from server import PromptServer
 from .cloud import CloudRun, error_response
-from . import manage, release
+from . import manage, manifest, release
 from .manifest import PLUGIN_DIR, endpoint_names, load_manifest
 from .validate import listed_models, model_lists
 
@@ -113,4 +113,4 @@ async def cancel_cloud_jobs(request):
 
 
 manage.add_routes(server.routes)
-release.add_routes(server.routes)
+release.add_routes(server.routes, manifest)

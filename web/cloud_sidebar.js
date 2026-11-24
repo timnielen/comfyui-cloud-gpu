@@ -59,27 +59,31 @@ async function save(change) {
 }
 
 async function loadReleaseStatus() {
-  const r = await api.fetchApi("/cloud/release");
-  releaseStatus = await r.json();
+  releaseStatus = null;
+  if (!cloud.selected) return render();
+  const r = await api.fetchApi(`/cloud/release?endpoint=${encodeURIComponent(cloud.selected)}`);
+  releaseStatus = r.ok || r.status === 500 ? await r.json() : { error: await r.text() };
   render();
 }
+
+const repoName = (origin) => origin.match(/github\.com[:/](.+?)(\.git)?\/?$/)?.[1] ?? origin;
 
 async function publish() {
   const s = releaseStatus;
   const steps = [
-    (s.endpoint_changes.length || s.code_changes) && `commit your endpoints and ${s.branch} to the ${s.deploy_branch} branch and push it`,
+    (s.endpoint_changes.length || s.code_changes) && `commit ${cloud.selected}'s Dockerfile and ${s.branch} to the ${s.deploy_branch} branch and push it to ${repoName(s.origin)}`,
     s.gh ? `create release ${s.next_release}` : `open GitHub to publish release ${s.next_release}`,
   ].filter(Boolean);
   const other = s.other_changes.length ? `\n\n${s.other_changes.length} uncommitted file(s) on ${s.branch} are not included.` : "";
   const ok = await app.extensionManager.dialog.confirm({
-    title: "Update the cloud images",
-    message: `This will ${steps.join(", then ")}. ${s.branch} itself is not changed. RunPod then rebuilds the endpoints from that release.${other}`,
+    title: `Update the ${cloud.selected} image`,
+    message: `This will ${steps.join(", then ")}. ${s.branch} itself is not changed. RunPod then rebuilds the endpoint from that release.${other}`,
   });
   if (!ok) return;
   releasing = true;
   render();
   try {
-    const result = await request("/cloud/release", "POST");
+    const result = await request(`/cloud/release?endpoint=${encodeURIComponent(cloud.selected)}`, "POST");
     if (result.published) toast(`Release ${result.tag} created. RunPod is rebuilding.`);
     else {
       window.open(result.url, "_blank");
@@ -135,14 +139,14 @@ function endpointSection() {
       creating = false;
       await cloud.refresh();
       cloud.select(name.value.trim());
-      await checkWorkflow();
+      await Promise.all([checkWorkflow(), loadReleaseStatus()]);
     };
     return section("New endpoint", name,
       el("label", { style: `${MUTED}; display: flex; gap: 6px; align-items: center` }, copy, `Copy models and nodes from ${cloud.selected ?? "–"}`),
       row(button("Create", create), button("Cancel", () => { creating = false; render(); }, "textonly")));
   }
   const choice = select(cloud.endpoints.map((e) => e.name), cloud.selected);
-  choice.onchange = async () => { cloud.select(choice.value); await checkWorkflow(); };
+  choice.onchange = async () => { cloud.select(choice.value); await Promise.all([checkWorkflow(), loadReleaseStatus()]); };
   return section("Endpoint", row(choice, button("New…", () => { creating = true; render(); })));
 }
 
@@ -150,7 +154,7 @@ function runpodSection(name, manifest) {
   const id = input({ value: manifest.endpoint_id, placeholder: "RunPod endpoint ID" });
   const children = [row(id, button("Save", () => save((m) => { m.endpoint_id = id.value.trim(); })))];
   if (!manifest.endpoint_id) {
-    children.push(el("div", { style: MUTED, innerHTML: `Create it in RunPod: Serverless → New Endpoint → GitHub repo, Dockerfile path <code>endpoints/${name}/Dockerfile</code>, build context <code>.</code>, then paste its ID here.` }));
+    children.push(el("div", { style: MUTED, innerHTML: `Deploy it below first. Then create it in RunPod: Serverless → New Endpoint → GitHub repo, branch <code>cloud/${name}</code>, and paste its ID here.` }));
   }
   return section("RunPod endpoint", ...children);
 }
@@ -248,11 +252,11 @@ function releaseSection() {
   if (!s) return section("Cloud image", el("div", { style: MUTED, textContent: "Checking…" }));
   if (s.error) return section("Cloud image", el("div", { style: MUTED, textContent: s.error }));
   const pending = s.endpoint_changes.length > 0 || s.code_changes || !s.released;
-  const lines = [s.release ? `Latest release: ${s.release}` : "No release yet."];
+  const lines = [`Repository: ${repoName(s.origin)}`, s.release ? `Latest release: ${s.release}` : "No release yet."];
   if (s.endpoint_changes.length) lines.push(`${s.endpoint_changes.length} endpoint file(s) changed since the last deploy.`);
   if (s.code_changes && s.deployed) lines.push(`${s.branch} has commits that aren't deployed yet.`);
   if (s.deployed && !s.endpoint_changes.length && !s.code_changes && !s.released) lines.push(`The ${s.deploy_branch} branch is ahead of the latest release.`);
-  if (!pending) lines.push("The cloud images are up to date.");
+  if (!pending) lines.push("The image is up to date.");
   if (s.other_changes.length) lines.push(`${s.other_changes.length} uncommitted file(s) on ${s.branch} won't be included.`);
   const go = button(releasing ? "Working…" : `Deploy & release ${s.next_release}`, publish);
   go.disabled = releasing || !pending;

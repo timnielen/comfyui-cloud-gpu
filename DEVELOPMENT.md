@@ -11,7 +11,7 @@ How comfy_cloud_run works inside. For setup, see [README.md](README.md).
 | `validate.py` | local ComfyUI | Model lists for the cloud: validation against a manifest, cloud models in the GUI's dropdowns |
 | `manifest.py` | local ComfyUI, `tools/` | Loading, checking and saving manifests; Dockerfile generation. No ComfyUI imports |
 | `manage.py` | local ComfyUI | Routes for managing manifests from the GUI; they work without credentials |
-| `release.py` | local ComfyUI | Deploy the endpoints to the `cloud` branch and create the release |
+| `release.py` | local ComfyUI | Deploy an endpoint to its `cloud/<name>` branch and create its release |
 | `web/cloud_run.js` | browser | Cloud button group in the Run widget, endpoint menu, cancel button, Alt+Enter |
 | `web/cloud_sidebar.js` | browser | Cloud sidebar tab |
 | `worker/handler.py` | RunPod worker | Starts ComfyUI, runs one prompt per job, streams its events |
@@ -22,7 +22,7 @@ The plugin loads on the worker too, because the image copies it into `custom_nod
 
 ## Image
 
-Built by RunPod with this repo as build context. Layer order: base → models (one layer each) → torch cu130 → ComfyUI at the pinned commit → its requirements → worker requirements → custom nodes (one layer each) → `pip` pins → plugin code. A code or dependency change never re-downloads the models. `.dockerignore` excludes `endpoints/` from the build context; Docker still reads the Dockerfile from there. Every release rebuilds every endpoint connected to the repo, so an endpoint whose Dockerfile and plugin code didn't change should rebuild entirely from cache, into an identical image. Whether RunPod's builder reuses cached layers between builds isn't verified.
+Built by RunPod with this repo as build context. Layer order: base → models (one layer each) → torch cu130 → ComfyUI at the pinned commit → its requirements → worker requirements → custom nodes (one layer each) → `pip` pins → plugin code. A code or dependency change never re-downloads the models. `.dockerignore` excludes `endpoints/` from the build context; only the root Dockerfile is used. `endpoints/<name>/Dockerfile` in your working copy is just a preview written on save. Whether RunPod's builder reuses cached layers between builds isn't verified.
 
 ## Job protocol
 
@@ -105,20 +105,22 @@ Models for "missing" come from the `models` lists that workflows embed in node p
 
 ### Releases
 
-Endpoints are user configuration, so they never go into `main`: `endpoints/` is in `.gitignore`. RunPod builds from the `cloud` deploy branch, where each commit is the current branch's tree plus the working copy of `endpoints/`.
+Endpoints are user configuration, so they never go into `main`: `endpoints/` is in `.gitignore`. Each endpoint has a deploy branch, `cloud/<name>`. Each commit on it is the current branch's tree plus two files: the endpoint's Dockerfile at the repo root, generated from the manifest at deploy time, and `endpoints/<name>/manifest.json` for reference. RunPod then only needs the branch, because Dockerfile path and build context stay at their defaults.
 
-`GET /cloud/release` builds that tree in a temporary index (`GIT_INDEX_FILE`, `read-tree HEAD`, `add -f endpoints`, `write-tree`), so the real index and working tree are never touched. It then compares the tree with `origin/cloud` (fetched) and reports:
-- the endpoint files that changed since the last deploy;
-- whether HEAD is already contained in `cloud`;
-- whether the latest `vX.Y.Z` tag on origin points at the `cloud` tip (via `git ls-remote`, because release tags created on GitHub aren't fetched locally);
+`GET /cloud/release?endpoint=<name>` builds that tree in a temporary index (`GIT_INDEX_FILE`, `read-tree HEAD`, the Dockerfile blob via `hash-object` and `update-index --cacheinfo`, `add -f` the manifest, `write-tree`), so the real index and working tree are never touched. It then compares the tree with `origin/cloud/<name>` (fetched) and reports:
+- which of the Dockerfile and the manifest changed since the last deploy;
+- whether HEAD is already contained in the branch;
+- whether the endpoint's latest `<name>-vX.Y.Z` tag on origin points at the branch tip (via `git ls-remote`, because release tags created on GitHub aren't fetched locally);
 - the next tag (patch bump), uncommitted files outside `endpoints/`, and whether `gh` is installed.
 
-`POST /cloud/release` (one at a time):
-1. If anything changed, creates the deploy commit with `git commit-tree`. Its parents are the `cloud` tip and HEAD, the latter only when HEAD isn't in `cloud` yet, so the plugin history stays connected.
-2. Pushes it with `git push origin <commit>:refs/heads/cloud`. The local branch and HEAD don't move.
+`POST /cloud/release?endpoint=<name>` (one at a time):
+1. If anything changed, creates the deploy commit with `git commit-tree`. Its parents are the branch tip and HEAD, the latter only when HEAD isn't in the branch yet, so the plugin history stays connected.
+2. Pushes it with `git push origin <commit>:refs/heads/cloud/<name>`. The local branch and HEAD don't move.
 3. Runs `gh release create <tag> --target <commit>`, or without `gh` returns GitHub's prefilled new-release URL, which the sidebar opens.
 
-Git runs with `GIT_TERMINAL_PROMPT=0`, so missing credentials fail instead of hanging. A release rebuilds every RunPod endpoint connected to the repo.
+Git runs with `GIT_TERMINAL_PROMPT=0`, so missing credentials fail instead of hanging.
+
+Open question: RunPod's docs don't say whether a release builds each endpoint's configured branch, or the commit the release points to. If it's the latter, a release for one endpoint would make the other endpoints build that endpoint's Dockerfile. Check this once with two endpoints on RunPod.
 
 ### Cancelling
 

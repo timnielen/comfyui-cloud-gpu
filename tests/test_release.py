@@ -6,8 +6,9 @@ from release import next_tag, release_page_url
 
 
 def test_next_tag():
-    assert next_tag(None) == "v0.1.0"
-    assert next_tag("v0.1.9") == "v0.1.10"
+    assert next_tag("h3", None) == "h3-v0.1.0"
+    assert next_tag("h3", "h3-v0.1.9") == "h3-v0.1.10"
+    assert next_tag("z-image-turbo", "z-image-turbo-v1.2.3") == "z-image-turbo-v1.2.4"
 
 
 def test_release_page_url():
