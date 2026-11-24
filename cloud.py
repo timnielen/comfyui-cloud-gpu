@@ -16,6 +16,7 @@ import execution
 import folder_paths
 from comfy_execution.jobs import validate_job_id
 from server import valid_workflow_metadata, workflow_metadata_from_prompt
+from .validate import validate_cloud_prompt
 
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 ENDPOINTS_DIR = os.path.join(PLUGIN_DIR, "endpoints")
@@ -157,11 +158,15 @@ class CloudRun:
         name = json_data.get("cloud_endpoint") or names[0]
         if name not in names:
             return error_response(400, f"Unknown cloud endpoint {name!r}", f"Available: {', '.join(names)}")
-        endpoint_id = load_manifest(name)["endpoint_id"]
+        manifest = load_manifest(name)
+        endpoint_id = manifest["endpoint_id"]
         if not endpoint_id:
             return error_response(400, f"Cloud endpoint {name!r} has no endpoint_id", f"Set it in endpoints/{name}/manifest.json")
 
         self.server.node_replace_manager.apply_replacements(prompt)
+        valid = await validate_cloud_prompt(prompt_id, prompt, json_data.get("partial_execution_targets"), manifest, name)
+        if not valid[0]:
+            return web.json_response({"error": valid[1], "node_errors": valid[3]}, status=400)
         extra_data = json_data.get("extra_data", {})
         client_id = json_data.get("client_id")
         if client_id:
@@ -190,11 +195,11 @@ class CloudRun:
         extra_data["create_time"] = int(time.time() * 1000)
         queue = self.server.prompt_queue
         with queue.mutex:
-            queue.currently_running[prompt_id] = (number, prompt_id, prompt, extra_data, [], {})
+            queue.currently_running[prompt_id] = (number, prompt_id, prompt, extra_data, valid[2], {})
         self.server.queue_updated()
         self.jobs[prompt_id] = job
         job.task = asyncio.create_task(self.follow(job))
-        return web.json_response({"prompt_id": prompt_id, "number": number, "node_errors": {}})
+        return web.json_response({"prompt_id": prompt_id, "number": number, "node_errors": valid[3]})
 
     # Following a job
 

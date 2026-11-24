@@ -8,6 +8,7 @@ How comfy_cloud_run works inside. For setup, see [README.md](README.md).
 |---|---|---|
 | `__init__.py` | local ComfyUI | Reads `.env`, registers `POST /cloud/prompt`, installs the cancel hooks |
 | `cloud.py` | local ComfyUI | RunPod and R2 client; replays the cloud job's events on the local server |
+| `validate.py` | local ComfyUI | Validates a prompt against an endpoint's manifest before anything is submitted |
 | `web/cloud_run.js` | browser | Run on Cloud button, Alt+Enter command |
 | `worker/handler.py` | RunPod worker | Starts ComfyUI, runs one prompt per job, streams its events |
 | `tools/gen_dockerfile.py` | your machine | `manifest.json` → `Dockerfile`; `--pin-local` pins the local ComfyUI commit |
@@ -46,14 +47,23 @@ Worker details:
 
 `POST /cloud/prompt` accepts the `/prompt` body, plus an optional `cloud_endpoint` (an endpoint folder name; the default is the first one):
 
-1. Runs the `on_prompt` handlers and node replacements, like `/prompt`.
+1. Runs the `on_prompt` handlers and node replacements, like `/prompt`, then validates (see below). If validation fails, it answers 400 with `/prompt`'s error format, so the frontend shows red nodes and no worker starts.
 2. Finds input files: string inputs that resolve via `folder_paths.get_annotated_filepath` to a file inside the input directory. Each is uploaded to `inputs/<sha256><ext>`, skipped if that key already exists.
 3. Submits to RunPod `/run` and puts `(number, prompt_id, prompt, extra_data, [], {})` into `prompt_queue.currently_running` under the key `prompt_id`. The queue panel, `/queue` and `/api/jobs` then show the job.
 4. A background task polls `/stream` every second. It retries on 429, 5xx and connection errors, and replays events with `send_sync(..., client_id)`. The job's `workflow_id` is merged into every event, so a concurrently running local prompt can't override it.
 5. `executed`: files are downloaded into the same type and subfolder locally first. If the name is taken, it becomes `<stem>_<prompt id[:8]><ext>`. The event is rewritten to the local names.
 6. At the end it calls `task_done` with the recorded status messages, then sends `executing {node: null}`, the same order as a local run. If no end event came, it records one itself: `execution_interrupted` for `CANCELLED`, otherwise `execution_error` with the RunPod error.
 
-`rejected` becomes an `execution_error` on the first failing node, with every node error in the message. The frontend highlights that node and shows the error, as for any execution error. Most rejections should be caught before submitting once local validation against the manifest exists.
+`rejected` becomes an `execution_error` on the first failing node, with every node error in the message. The frontend highlights that node and shows the error, as for any execution error. This only happens when the image doesn't match the manifest, e.g. before a rebuild.
+
+### Validation
+
+`validate_cloud_prompt` runs ComfyUI's own `execution.validate_prompt`, with model lists taken from the manifest:
+- `folder_paths.get_filename_list` is replaced by a wrapper. While the `manifest_models` ContextVar is set, it returns the manifest's names for model folders (everything except `configs` and `custom_nodes`).
+- The variable is only set inside the cloud request's task, so local dropdowns and local runs never see manifest models.
+- Missing models therefore give the same `value_not_in_list` errors as a local run.
+
+Before that, any node whose `RELATIVE_PYTHON_MODULE` is `custom_nodes.<pack>` fails with `cloud_missing_node_pack` if `<pack>` doesn't match a manifest repo name (case-insensitive). The check needs custom nodes installed locally, as editing a workflow does anyway.
 
 ## Frontend
 
