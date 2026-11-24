@@ -30,7 +30,7 @@ function toast(detail, severity = "info") {
 async function request(route, method, body) {
   const r = await api.fetchApi(route, { method, headers: JSON_HEADERS, body: body && JSON.stringify(body) });
   const data = await r.json();
-  if (!r.ok) throw new Error(data.error);
+  if (!r.ok) throw new Error(data.error?.message ? `${data.error.message}. ${data.error.details}` : data.error);
   return data;
 }
 
@@ -42,6 +42,8 @@ let installedPacks = [];
 let workflowMissing = null;
 let creating = false;
 let releaseStatus = null;
+let bucket = null;
+const FREE_TIER_BYTES = 10 * 1000 ** 3;  // Cloudflare R2's free storage
 let releasing = false;
 
 async function save(change) {
@@ -203,6 +205,45 @@ function nodePacksSection(manifest) {
   return section(`Node packs (${manifest.custom_nodes.length})`, ...children);
 }
 
+async function loadBucket() {
+  try {
+    bucket = await request("/cloud/bucket", "GET");
+  } catch (e) {
+    bucket = { error: e.message };
+  }
+  render();
+}
+
+async function clearBucket() {
+  const ok = await app.extensionManager.dialog.confirm({
+    title: "Clear the bucket",
+    message: "Delete all cloud inputs and outputs from the bucket? Outputs already downloaded to your output folder are kept. Inputs are uploaded again when needed.",
+  });
+  if (!ok) return;
+  try {
+    const { deleted } = await request("/cloud/bucket/clear", "POST");
+    toast(`Deleted ${deleted} file(s) from the bucket.`);
+  } catch (e) {
+    toast(e.message, "error");
+  }
+  await loadBucket();
+}
+
+const formatBytes = (bytes) => (bytes >= 1e9 ? `${(bytes / 1e9).toFixed(2)} GB` : bytes >= 1e6 ? `${(bytes / 1e6).toFixed(1)} MB` : `${Math.ceil(bytes / 1e3)} KB`);
+
+function bucketSection() {
+  if (!bucket) return section("Bucket", el("div", { style: MUTED, textContent: "Checking…" }));
+  if (bucket.error) return section("Bucket", el("div", { style: MUTED, textContent: bucket.error }), button("Check again", loadBucket, "textonly"));
+  const used = bucket.inputs.bytes + bucket.outputs.bytes;
+  const share = Math.min(1, used / FREE_TIER_BYTES);
+  const bar = el("div", { style: "height: 6px; border-radius: 3px; background: var(--comfy-input-bg); overflow: hidden" },
+    el("div", { className: share > 0.9 ? "bg-destructive" : "bg-primary", style: `height: 100%; width: ${(share * 100).toFixed(1)}%` }));
+  return section("Bucket",
+    el("div", { style: "font-size: 12px", textContent: `${formatBytes(used)} of the 10 GB R2 free tier (${(share * 100).toFixed(1)}%)` }), bar,
+    el("div", { style: MUTED, textContent: `Inputs ${formatBytes(bucket.inputs.bytes)} (${bucket.inputs.objects}) · outputs ${formatBytes(bucket.outputs.bytes)} (${bucket.outputs.objects})` }),
+    row(button("Clear bucket", clearBucket), button("Refresh", loadBucket, "textonly")));
+}
+
 function releaseSection() {
   const s = releaseStatus;
   if (!s) return section("Cloud image", el("div", { style: MUTED, textContent: "Checking…" }));
@@ -223,7 +264,7 @@ function render() {
   const manifest = cloud.manifest;
   const content = [endpointSection()];
   if (manifest && !creating) {
-    content.push(runpodSection(cloud.selected, manifest), workflowSection(), modelsSection(manifest), nodePacksSection(manifest), releaseSection());
+    content.push(runpodSection(cloud.selected, manifest), workflowSection(), modelsSection(manifest), nodePacksSection(manifest), bucketSection(), releaseSection());
   }
   root.replaceChildren(el("div", { style: "display: flex; flex-direction: column; height: 100%; overflow-y: auto" }, ...content));
 }
@@ -247,7 +288,7 @@ app.registerExtension({
           api.fetchApi("/cloud/node_packs").then((r) => r.json()),
           cloud.refresh(),
         ]);
-        await Promise.all([checkWorkflow(), loadReleaseStatus()]);
+        await Promise.all([checkWorkflow(), loadReleaseStatus(), loadBucket()]);
       },
       destroy: () => { root = null; },
     });

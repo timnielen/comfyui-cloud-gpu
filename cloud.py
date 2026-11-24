@@ -22,6 +22,7 @@ RUNPOD_API = "https://api.runpod.ai/v2"
 POLL_SECONDS = 1.0
 URL_EXPIRY = 86400
 TERMINAL = {"COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"}
+BUCKET_PREFIXES = ("inputs/", "outputs/")  # everything this plugin and its worker write to the bucket
 END_EVENTS = {"execution_success", "execution_error", "execution_interrupted"}
 HISTORY_EVENTS = {"execution_start", "execution_cached"} | END_EVENTS
 
@@ -278,6 +279,30 @@ class CloudRun:
             process_item=lambda item: item[:5])
         self.send(job, "executing", {"node": None, "prompt_id": job.prompt_id})
         del self.jobs[job.prompt_id]
+
+    # Bucket
+
+    def bucket_objects(self, prefix):
+        for page in self.s3.get_paginator("list_objects_v2").paginate(Bucket=self.bucket, Prefix=prefix):
+            yield from page.get("Contents", [])
+
+    def bucket_usage(self):
+        usage = {}
+        for prefix in BUCKET_PREFIXES:
+            objects = list(self.bucket_objects(prefix))
+            usage[prefix.rstrip("/")] = {"bytes": sum(o["Size"] for o in objects), "objects": len(objects)}
+        return usage
+
+    def clear_bucket(self):
+        """Delete everything under the plugin's prefixes. Returns the number of deleted objects."""
+        deleted = 0
+        for prefix in BUCKET_PREFIXES:
+            keys = [{"Key": o["Key"]} for o in self.bucket_objects(prefix)]
+            for i in range(0, len(keys), 1000):  # DeleteObjects takes at most 1000 keys
+                self.s3.delete_objects(Bucket=self.bucket, Delete={"Objects": keys[i:i + 1000], "Quiet": True})
+            deleted += len(keys)
+        logging.info(f"Cloud Run: cleared {deleted} objects from the bucket")
+        return deleted
 
     # Cancelling
 

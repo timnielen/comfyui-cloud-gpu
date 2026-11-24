@@ -47,6 +47,8 @@ Press **Run on Cloud** next to the Run button, or **Alt+Enter**. Its arrow picks
 
 Model dropdowns also list the models of your cloud endpoints, so you can pick them without having them locally. A local Run with such a model reports it as missing.
 
+The **Cloud** tab's **Bucket** section shows how much of R2's free 10 GB the cloud inputs and outputs use. **Clear bucket** deletes them. Outputs already saved to your `output/` folder are kept.
+
 Before anything is sent, the workflow is checked against the endpoint's manifest. Models or node packs the cloud image doesn't have are marked on the nodes, as they would be for a local run, and no worker is started.
 
 ## Changing what's in the cloud

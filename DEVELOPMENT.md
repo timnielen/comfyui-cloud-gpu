@@ -99,6 +99,10 @@ The selected endpoint is kept in `localStorage` (`CloudRun.endpoint`) and sent a
 
 Models for "missing" come from the `models` lists that workflows embed in node properties (`{name, url, directory}`).
 
+### Bucket
+
+`GET /cloud/bucket` sums object sizes under `inputs/` and `outputs/`, the only prefixes the plugin and worker write. `POST /cloud/bucket/clear` deletes everything under them in batches of 1000 and refuses (409) while cloud jobs are running. Other objects in the bucket are never touched. Both need the credentials in `.env`.
+
 ### Releases
 
 `GET /cloud/release` reports the plugin repo's state:

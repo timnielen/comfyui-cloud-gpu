@@ -88,6 +88,22 @@ async def cloud_jobs(request):
     return web.json_response({"configured": cloud is not None, "running": list(cloud.jobs) if cloud else []})
 
 
+@server.routes.get("/cloud/bucket")
+async def bucket_usage(request):
+    if cloud is None:
+        return error_response(503, "Cloud Run is not configured", f"Set {', '.join(missing)} in {ENV_FILE}")
+    return web.json_response(await asyncio.to_thread(cloud.bucket_usage))
+
+
+@server.routes.post("/cloud/bucket/clear")
+async def clear_bucket(request):
+    if cloud is None:
+        return error_response(503, "Cloud Run is not configured", f"Set {', '.join(missing)} in {ENV_FILE}")
+    if cloud.jobs:
+        return error_response(409, "Cloud jobs are running", "Their inputs and outputs are still needed. Clear the bucket when they are done.")
+    return web.json_response({"deleted": await asyncio.to_thread(cloud.clear_bucket)})
+
+
 @server.routes.post("/cloud/cancel")
 async def cancel_cloud_jobs(request):
     """Cancel every running cloud job (the Run on Cloud group's cancel button)."""
