@@ -1,4 +1,4 @@
-# comfy_cloud_run
+# Comfy Cloud Run
 
 Edit workflows in your local ComfyUI, run them on a RunPod Serverless GPU. Progress and results show up in your local GUI, and you don't need the models locally.
 
