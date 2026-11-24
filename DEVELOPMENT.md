@@ -31,7 +31,8 @@ Built by RunPod with this repo as build context. Layer order: base → models (o
 ```json
 {"prompt_id": "<uuid>", "prompt": {"...": "API prompt"},
  "extra_data": {"extra_pnginfo": {"workflow": {}}}, "partial_execution_targets": ["9"],
- "inputs": [{"path": "sub/face.png", "url": "<presigned GET>"}]}
+ "inputs": [{"path": "sub/face.png", "url": "<presigned GET>"}],
+ "runtime": {"models": [{"name", "directory", "url"}], "custom_nodes": [{"url", "commit"}]}}
 ```
 
 The handler is an async generator, and every yield is a list of events, read through `/stream`:
@@ -46,6 +47,11 @@ Worker details:
 - Inputs are downloaded before each job and deleted after it.
 - Outputs stay on disk, because a cached output node re-sends `executed` for the existing file.
 - If the generator is closed early (cancel, timeout), the handler deletes the prompt from the worker's queue and interrupts it.
+- Runtime entries (`"runtime": true` in the manifest) are left out of the Dockerfile. The local backend sends the ones the prompt uses in the job's `runtime` field: models whose name is an input value, and node packs that provide one of its nodes (`validate.runtime_entries`). Before queueing, the worker:
+  - downloads missing models via a `.part` file;
+  - clones missing node packs into `<pack>.disabled`, which ComfyUI's loader skips, and pip-installs their requirements with torch/torchvision/torchaudio pinned to the installed versions;
+  - renames each pack once installed, so a failed install never loads;
+  - restarts ComfyUI if any pack was installed.
 
 ## Local backend
 
@@ -69,7 +75,7 @@ Worker details:
 
 The same wrapper adds cloud models to the dropdowns. A middleware sets the `listed_models` ContextVar for `/object_info` requests (the only source of the frontend's combo values), and model folders then list local files plus the models of all endpoint manifests. The manifests are read on every request, so edits show after a GUI reload. Everything else still sees only local files: local `/prompt` validation, loaders, `/models/<folder>` and the model library (`/experiment/models`). A local Run with a cloud-only model therefore fails validation instead of failing to open a file.
 
-Before that, any node whose `RELATIVE_PYTHON_MODULE` is `custom_nodes.<pack>` fails with `cloud_missing_node_pack` if `<pack>` doesn't match a manifest repo name (case-insensitive). The check needs custom nodes installed locally, as editing a workflow does anyway.
+Before that, any node whose `RELATIVE_PYTHON_MODULE` is `custom_nodes.<pack>` fails with `cloud_missing_node_pack` unless the manifest has that pack (`validate.manifest_entry`). Packs match by repository URL (`repo_key`: host/owner/repo, ignoring scheme, user, `.git` and case) or else by folder name. Registry installs often use another folder name than their repository, e.g. `deno-custom-nodes` for `comfyui-deno-custom-nodes`. The check needs custom nodes installed locally, as editing a workflow does anyway.
 
 ## Frontend
 
@@ -94,7 +100,7 @@ The selected endpoint is kept in `localStorage` (`CloudRun.endpoint`) and sent a
 | `POST /cloud/endpoints` | `{"name", "copy_from"?}`: new endpoint, ComfyUI pinned to the local commit (or `v<version>` without git) |
 | `PUT /cloud/endpoints/{name}` | Save a manifest (checked by `check_manifest`) and regenerate its Dockerfile |
 | `POST /cloud/endpoints/{name}/missing` | `{"class_types", "models"}` from the open workflow → node packs and models the manifest lacks |
-| `GET /cloud/node_packs` | Locally installed git node packs with URL and commit (`app.deploy_to_cloud.scan_custom_nodes`) |
+| `GET /cloud/endpoints/{name}/addable_node_packs` | Locally installed node packs with a known repository that the manifest lacks: git installs (URL and commit from `.git`) and Comfy Registry installs (URL from the `Repository` entry of their `pyproject.toml`; pinned to HEAD when added) |
 | `POST /cloud/resolve_commit` | `{"url"}` → current HEAD commit via `git ls-remote`, https URLs only |
 
 Models for "missing" come from the `models` lists that workflows embed in node properties (`{name, url, directory}`).

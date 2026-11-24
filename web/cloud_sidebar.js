@@ -20,8 +20,17 @@ const select = (options, value) => {
   s.value = value;
   return s;
 };
-const item = (text, onRemove) => row(el("span", { textContent: text, title: text, style: "flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px" }),
-  button("✕", onRemove, "textonly"));
+// A manifest entry: name, an image/runtime switch, remove. Runtime entries are left out of the image and installed by the
+// worker when a job needs them, so changing them needs no rebuild.
+function item(text, runtime, onToggle, onRemove) {
+  const mode = button(runtime ? "runtime" : "image", onToggle, "textonly");
+  mode.title = runtime ? "Installed by the worker when a job needs it. Click to bake it into the image." : "Baked into the image. Click to install it at run time instead.";
+  mode.style.color = runtime ? "var(--color-muted-foreground)" : "";
+  return row(el("span", { textContent: text, title: text, style: "flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px" }),
+    mode, button("✕", onRemove, "textonly"));
+}
+
+const toggleRuntime = (entry) => { entry.runtime = !entry.runtime || undefined; };
 
 function toast(detail, severity = "info") {
   app.extensionManager.toast.add({ severity, summary: "Cloud Run", detail, life: severity === "error" ? 8000 : 4000 });
@@ -38,7 +47,7 @@ const fileName = (url) => decodeURIComponent(url.split(/[?#]/)[0].split("/").pop
 
 let root = null;
 let modelFolders = [];
-let installedPacks = [];
+let addablePacks = [];
 let workflowMissing = null;
 let creating = false;
 let releaseStatus = null;
@@ -112,8 +121,16 @@ function workflowContents() {
   return { class_types: [...classTypes], models: [...models.values()] };
 }
 
+// What the open workflow needs that the selected endpoint lacks, and which installed node packs it could still get.
 async function checkWorkflow() {
-  workflowMissing = cloud.selected ? await request(`/cloud/endpoints/${cloud.selected}/missing`, "POST", workflowContents()) : null;
+  if (cloud.selected) {
+    [workflowMissing, addablePacks] = await Promise.all([
+      request(`/cloud/endpoints/${cloud.selected}/missing`, "POST", workflowContents()),
+      request(`/cloud/endpoints/${cloud.selected}/addable_node_packs`, "GET"),
+    ]);
+  } else {
+    [workflowMissing, addablePacks] = [null, []];
+  }
   render();
 }
 
@@ -187,15 +204,16 @@ function modelsSection(manifest) {
     save((m) => m.models.push({ name: name.value.trim(), directory: folder.value, url: url.value.trim() }));
   };
   return section(`Models (${manifest.models.length})`,
-    ...manifest.models.map((model, i) => item(`${model.directory}/${model.name}`, () => save((m) => m.models.splice(i, 1)))),
+    ...manifest.models.map((model, i) => item(`${model.directory}/${model.name}`, model.runtime,
+      () => save((m) => toggleRuntime(m.models[i])), () => save((m) => m.models.splice(i, 1)))),
     url, row(folder, name), button("Add model", add));
 }
 
 function nodePacksSection(manifest) {
-  const inManifest = new Set(manifest.custom_nodes.map((n) => fileName(n.url).replace(/\.git$/, "").toLowerCase()));
-  const installed = installedPacks.filter((p) => !inManifest.has(p.name.toLowerCase()));
+  const installed = addablePacks;
   const children = manifest.custom_nodes.map((node, i) =>
-    item(`${fileName(node.url).replace(/\.git$/, "")} @ ${(node.commit ?? "latest").slice(0, 7)}`, () => save((m) => m.custom_nodes.splice(i, 1))));
+    item(`${fileName(node.url).replace(/\.git$/, "")} @ ${(node.commit ?? "latest").slice(0, 7)}`, node.runtime,
+      () => save((m) => toggleRuntime(m.custom_nodes[i])), () => save((m) => m.custom_nodes.splice(i, 1))));
   if (installed.length) {
     const choice = select(installed.map((p) => p.name), installed[0].name);
     children.push(row(choice, button("Add installed", () => {
@@ -287,9 +305,8 @@ app.registerExtension({
       render: async (element) => {
         root = element;
         render();
-        [modelFolders, installedPacks] = await Promise.all([
+        [modelFolders] = await Promise.all([
           api.fetchApi("/models").then((r) => r.json()).then((f) => f.filter((x) => x !== "custom_nodes" && x !== "configs")),
-          api.fetchApi("/cloud/node_packs").then((r) => r.json()),
           cloud.refresh(),
         ]);
         await Promise.all([checkWorkflow(), loadReleaseStatus(), loadBucket()]);

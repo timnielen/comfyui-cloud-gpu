@@ -16,7 +16,7 @@ import folder_paths
 from comfy_execution.jobs import validate_job_id
 from server import valid_workflow_metadata, workflow_metadata_from_prompt
 from .manifest import ENDPOINTS_DIR, endpoint_names, load_manifest
-from .validate import validate_cloud_prompt
+from .validate import runtime_entries, validate_cloud_prompt
 
 RUNPOD_API = "https://api.runpod.ai/v2"
 POLL_SECONDS = 1.0
@@ -166,6 +166,9 @@ class CloudRun:
             job_input["extra_data"] = {"extra_pnginfo": extra_data["extra_pnginfo"]}
         if "partial_execution_targets" in json_data:
             job_input["partial_execution_targets"] = json_data["partial_execution_targets"]
+        runtime = runtime_entries(prompt, manifest)
+        if runtime["models"] or runtime["custom_nodes"]:
+            job_input["runtime"] = runtime
 
         try:
             job_input["inputs"] = await asyncio.to_thread(self.upload_inputs, prompt)

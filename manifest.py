@@ -69,9 +69,9 @@ def node_layer(node):
 def dockerfile(manifest):
     comfyui = manifest["comfyui"]
     out = [HEADER, "\n# Models, one layer each.\nWORKDIR /comfyui/models\n"]
-    out += [model_layer(m) for m in manifest["models"]]
+    out += [model_layer(m) for m in manifest["models"] if not m.get("runtime")]  # runtime entries: the worker installs them per job
     out += ["\n", DEPENDENCIES.format(comfyui="RUN " + git_checkout(comfyui["url"], comfyui.get("commit"), "/comfyui")), "\n# Custom nodes, one layer each.\n"]
-    out += [node_layer(n) for n in manifest["custom_nodes"]]
+    out += [node_layer(n) for n in manifest["custom_nodes"] if not n.get("runtime")]
     if manifest["pip"]:
         out.append("RUN pip install " + " ".join(shlex.quote(p) for p in manifest["pip"]) + "\n")
     out += ["\n", FOOTER]
@@ -101,6 +101,9 @@ def check_manifest(manifest):
         strings(node, ("url",), ("commit",))
     for model in manifest.get("models", []):
         strings(model, ("name", "directory", "url"))
+    for entry in manifest.get("custom_nodes", []) + manifest.get("models", []):
+        if not isinstance(entry.get("runtime", False), bool):
+            raise ValueError(f"runtime must be true or false in {entry!r}")
         for part in (model["directory"], model["name"]):
             if not MODEL_PATH.fullmatch(part) or ".." in part.split("/"):
                 raise ValueError(f"invalid model path {part!r}")

@@ -5,9 +5,8 @@ import os
 from aiohttp import web
 
 import folder_paths
-from app.deploy_to_cloud import scan_custom_nodes
 from .manifest import endpoint_dir, endpoint_names, load_manifest, new_manifest, pack_name, save_manifest
-from .validate import manifest_packs, node_pack
+from .validate import local_node_packs, manifest_entry, node_pack
 
 
 COMFY_DIR = os.path.dirname(os.path.abspath(folder_paths.__file__))  # the running ComfyUI, wherever custom_nodes lives
@@ -15,12 +14,6 @@ COMFY_DIR = os.path.dirname(os.path.abspath(folder_paths.__file__))  # the runni
 
 def error(status, message):
     return web.json_response({"error": message}, status=status)
-
-
-def local_node_packs():
-    """{folder name: {"url", "commit"}} for custom node packs installed locally from git."""
-    packs = scan_custom_nodes(folder_paths.get_folder_paths("custom_nodes"))
-    return {p["dirName"]: {"url": p["url"], "commit": p.get("commit")} for p in packs if p["enabled"] and p.get("url")}
 
 
 def add_routes(routes):
@@ -62,17 +55,22 @@ def add_routes(routes):
             return error(404, f"Unknown endpoint {name!r}")
         body = await request.json()
         manifest = load_manifest(name)
-        have_packs = manifest_packs(manifest)
-        local = local_node_packs()
-        packs = sorted({pack for pack in map(node_pack, body.get("class_types", [])) if pack and pack.lower() not in have_packs})
+        local = await asyncio.to_thread(local_node_packs)
+        packs = sorted({pack for pack in map(node_pack, body.get("class_types", [])) if pack and not manifest_entry(pack, manifest, local)})
         have_models = {(folder_paths.map_legacy(m["directory"]), m["name"]) for m in manifest["models"]}
         models = [m for m in body.get("models", []) if (folder_paths.map_legacy(m["directory"]), m["name"]) not in have_models]
         return web.json_response({"node_packs": [{"name": p, **local.get(p, {"url": None, "commit": None})} for p in packs], "models": models})
 
-    @routes.get("/cloud/node_packs")
-    async def installed_node_packs(request):
+    @routes.get("/cloud/endpoints/{name}/addable_node_packs")
+    async def addable_node_packs(request):
+        """Locally installed node packs with a known repository that the endpoint's manifest doesn't have yet."""
+        name = request.match_info["name"]
+        if name not in endpoint_names():
+            return error(404, f"Unknown endpoint {name!r}")
+        manifest = load_manifest(name)
         packs = await asyncio.to_thread(local_node_packs)
-        return web.json_response([{"name": name, **info} for name, info in sorted(packs.items()) if name != "comfy_cloud_run"])
+        return web.json_response([{"name": pack, **info} for pack, info in sorted(packs.items())
+                                  if pack != "comfy_cloud_run" and not manifest_entry(pack, manifest, packs)])
 
     @routes.post("/cloud/resolve_commit")
     async def resolve_commit(request):

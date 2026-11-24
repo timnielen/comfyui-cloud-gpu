@@ -46,3 +46,19 @@ def test_check_manifest_rejects_unsafe_model_paths(directory):
 
 def test_check_manifest_accepts_valid():
     check_manifest({**MANIFEST, "models": [{"name": "sub dir/m (1).safetensors", "directory": "diffusion_models", "url": "https://x"}]})
+
+
+def test_runtime_entries_stay_out_of_the_image():
+    manifest = {**MANIFEST,
+                "custom_nodes": [{"url": "https://github.com/a/Baked"}, {"url": "https://github.com/a/Live", "runtime": True}],
+                "models": [{"name": "baked.safetensors", "directory": "vae", "url": "https://x/baked"},
+                           {"name": "live.safetensors", "directory": "loras", "url": "https://x/live", "runtime": True}]}
+    text = dockerfile(manifest)
+    assert "custom_nodes/Baked" in text and "baked.safetensors" in text
+    assert "Live" not in text and "live.safetensors" not in text
+    check_manifest(manifest)
+
+
+def test_check_manifest_rejects_non_boolean_runtime():
+    with pytest.raises(ValueError):
+        check_manifest({**MANIFEST, "models": [{"name": "m.safetensors", "directory": "vae", "url": "https://x", "runtime": "yes"}]})

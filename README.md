@@ -74,7 +74,7 @@ Before anything is sent, the workflow is checked against the endpoint's manifest
 ## Changing what's in the cloud
 
 Open the **Cloud** tab in the sidebar, or **Manage endpoints…** in the Cloud button's menu. There you can:
-- add and remove models and node packs;
+- add and remove models and node packs, and choose per entry whether it's baked into the **image** or installed at **runtime** (see below);
 - add what the open workflow needs but the endpoint lacks;
 - set the RunPod endpoint ID;
 - create new endpoints, e.g. one for Flux and one for MiniMax H3, each with its own models and GPU. For a new endpoint, deploy it, then create a RunPod endpoint for its branch, as in setup step 4.
@@ -88,6 +88,14 @@ Your `main` branch is never changed. `endpoints/` is ignored there, so your setu
 On another computer, get an endpoint back from its branch: `git fetch && git restore --source origin/cloud/<name> --worktree -- endpoints/<name>`.
 
 With the [GitHub CLI](https://cli.github.com) installed and logged in (`gh auth login`), the release is created directly. Without it, GitHub's release page opens with everything filled in, and you click **Publish release**.
+
+### Image or runtime
+
+Each model and node pack in the Cloud tab has an **image / runtime** switch:
+- **image** (the default): baked into the image. It's always there and costs nothing per run, but adding or changing it needs a deploy and a rebuild.
+- **runtime**: left out of the image. The worker downloads the model or installs the node pack when a job uses it, and keeps it while the worker stays warm. Changing it needs no rebuild, but every cold start that uses it pays the download or install time. Node packs also restart the worker's ComfyUI once.
+
+Runtime is handy for trying things out and for small, rarely used models or node packs. Switch them to image once you keep them. A runtime node pack's Python requirements are installed with the image's PyTorch pinned, but other dependency conflicts only show up when a job runs.
 
 ### Editing manifests by hand
 

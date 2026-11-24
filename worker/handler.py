@@ -2,7 +2,9 @@
 
 Job input:
   {"prompt_id": "<uuid>", "prompt": {...API prompt...}, "extra_data": {"extra_pnginfo": {...}},
-   "partial_execution_targets": [...], "inputs": [{"path": "sub/name.png", "url": "<presigned GET>"}]}
+   "partial_execution_targets": [...], "inputs": [{"path": "sub/name.png", "url": "<presigned GET>"}],
+   "runtime": {"models": [{"name", "directory", "url"}], "custom_nodes": [{"url", "commit"}]}}
+Runtime models and node packs are manifest entries left out of the image; missing ones are installed before the job.
 
 Every yield is a list of events, read through RunPod's /stream:
   {"type": "rejected", "error": {...}, "node_errors": {...}}   the remote /prompt returned 400
@@ -15,10 +17,13 @@ Endpoint env vars: BUCKET_ENDPOINT, BUCKET_NAME, BUCKET_KEY, BUCKET_SECRET
 """
 import asyncio
 import contextlib
+import importlib.metadata
 import mimetypes
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 
@@ -28,7 +33,7 @@ import runpod
 
 COMFY_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 COMFY_URL = "http://127.0.0.1:8188"
-DIRS = {kind: os.path.join(COMFY_DIR, kind) for kind in ("input", "output", "temp")}
+DIRS = {kind: os.path.join(COMFY_DIR, kind) for kind in ("input", "output", "temp", "models", "custom_nodes")}
 BATCH_SECONDS = 0.5
 PROMPT_KEYS = ("prompt", "extra_data", "partial_execution_targets")  # job input passed on to ComfyUI's /prompt
 URL_EXPIRY = 7 * 86400
@@ -70,12 +75,71 @@ def local_path(kind, subfolder, filename):
 
 
 async def download(session, url, path):
+    """Download to a .part file first, so an interrupted download never looks complete."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     async with session.get(url) as r:
         r.raise_for_status()
-        with open(path, "wb") as f:
+        with open(path + ".part", "wb") as f:
             async for chunk in r.content.iter_chunked(1 << 20):
                 f.write(chunk)
+    os.replace(path + ".part", path)
+
+
+async def run_command(*args):
+    proc = await asyncio.create_subprocess_exec(*args, cwd=COMFY_DIR)
+    if await proc.wait() != 0:
+        raise RuntimeError(f"{' '.join(args[:4])} failed with exit code {proc.returncode}")
+
+
+async def install_node_pack(node, constraints):
+    """Clone and pip-install a runtime node pack unless present. Returns whether it was installed now.
+
+    It is installed as <name>.disabled, which ComfyUI skips, and renamed when done, so a failed install never loads.
+    """
+    path = local_path("custom_nodes", "", node["url"].rstrip("/").rsplit("/", 1)[-1].removesuffix(".git"))
+    if os.path.isdir(path):
+        return False
+    print(f"handler - installing runtime node pack {os.path.basename(path)}")
+    staging = path + ".disabled"
+    shutil.rmtree(staging, ignore_errors=True)
+    try:
+        if node.get("commit"):
+            await run_command("git", "init", "-q", staging)
+            await run_command("git", "-C", staging, "fetch", "-q", "--depth", "1", node["url"], node["commit"])
+            await run_command("git", "-C", staging, "checkout", "-q", "FETCH_HEAD")
+        else:
+            await run_command("git", "clone", "-q", "--depth", "1", node["url"], staging)
+        requirements = os.path.join(staging, "requirements.txt")
+        if os.path.isfile(requirements):
+            await run_command(sys.executable, "-m", "pip", "install", "-r", requirements, "-c", constraints)
+    except Exception:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    os.replace(staging, path)
+    return True
+
+
+async def prepare_runtime(session, runtime):
+    """Download missing runtime models and install missing runtime node packs, restarting ComfyUI for new packs."""
+    for model in runtime.get("models", []):
+        path = local_path("models", model["directory"], model["name"])
+        if not os.path.exists(path):
+            print(f"handler - downloading runtime model {model['directory']}/{model['name']}")
+            await download(session, model["url"], path)
+    if not runtime.get("custom_nodes"):
+        return
+    with tempfile.NamedTemporaryFile("w", suffix=".txt") as constraints:
+        # A pack's requirements must not replace the image's PyTorch build.
+        pinned = [d for d in importlib.metadata.distributions() if d.metadata["Name"] in ("torch", "torchvision", "torchaudio")]
+        constraints.write("".join(f"{d.metadata['Name']}=={d.version}\n" for d in pinned))
+        constraints.flush()
+        installed = [await install_node_pack(node, constraints.name) for node in runtime["custom_nodes"]]
+    if any(installed):
+        print("handler - restarting ComfyUI to load the new node packs")
+        comfy.terminate()
+        await asyncio.to_thread(comfy.wait)
+        start_comfy()
+        await wait_for_comfy(session)
 
 
 def upload(prompt_id, file):
@@ -147,6 +211,7 @@ async def handler(job):
     inp = job["input"]
     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=None, sock_connect=30)) as session:
         await wait_for_comfy(session)
+        await prepare_runtime(session, inp.get("runtime", {}))
         inputs = [local_path("input", "", item["path"]) for item in inp.get("inputs", [])]
         try:
             await asyncio.gather(*(download(session, item["url"], path) for item, path in zip(inp.get("inputs", []), inputs)))
