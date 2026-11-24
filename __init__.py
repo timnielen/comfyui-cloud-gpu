@@ -1,4 +1,4 @@
-"""Run on Cloud: run prompts from the local GUI on a RunPod Serverless endpoint. The cloud worker itself lives in worker/."""
+"""Cloud Run: run prompts from the local GUI on a RunPod Serverless endpoint. The cloud worker itself lives in worker/."""
 import asyncio
 import json
 import os
@@ -106,7 +106,7 @@ async def clear_bucket(request):
 
 @server.routes.post("/cloud/cancel")
 async def cancel_cloud_jobs(request):
-    """Cancel every running cloud job (the Run on Cloud group's cancel button)."""
+    """Cancel every running cloud job (the cloud Run group's cancel button)."""
     if cloud is not None:
         await asyncio.gather(*(cloud.cancel(prompt_id) for prompt_id in list(cloud.jobs)))
     return web.Response()

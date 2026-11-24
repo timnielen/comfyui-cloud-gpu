@@ -43,7 +43,7 @@ In the plugin folder, copy `.env.example` to `.env` and fill it in:
 
 ## Running
 
-Press **Run on Cloud** next to the Run button, or **Alt+Enter**. Its arrow picks the endpoint, and its ✕ cancels running cloud jobs. The run shows up in the queue like a local one, and outputs are saved to your local `output/` folder. You can run locally and in the cloud at the same time.
+Press the cloud **Run** button (**☁ Run · h3**, with the selected endpoint) next to the normal Run button, or **Alt+Enter**. Its arrow picks the endpoint, and its ✕ cancels running cloud jobs. The run shows up in the queue like a local one, and outputs are saved to your local `output/` folder. You can run locally and in the cloud at the same time.
 
 Model dropdowns also list the models of your cloud endpoints, so you can pick them without having them locally. A local Run with such a model reports it as missing.
 
@@ -53,7 +53,7 @@ Before anything is sent, the workflow is checked against the endpoint's manifest
 
 ## Changing what's in the cloud
 
-Open the **Cloud** tab in the sidebar, or **Manage endpoints…** in the Run on Cloud menu. There you can:
+Open the **Cloud** tab in the sidebar, or **Manage endpoints…** in the cloud Run button's menu. There you can:
 - add and remove models and node packs;
 - add what the open workflow needs but the endpoint lacks;
 - set the RunPod endpoint ID;

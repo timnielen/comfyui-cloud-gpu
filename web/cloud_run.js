@@ -16,7 +16,7 @@ export function el(tag, props = {}, ...children) {
   return element;
 }
 
-// Endpoints from endpoints/*/manifest.json and the one Run on Cloud uses. Shared with the sidebar.
+// Endpoints from endpoints/*/manifest.json and the one cloud runs use. Shared with the sidebar.
 export const cloud = {
   endpoints: [],
   selected: localStorage.getItem("CloudRun.endpoint"),
@@ -56,9 +56,9 @@ api.fetchApi = (route, options) => {
 const runOnCloud = () => app.queuePrompt(CLOUD, 1);
 const openSidebar = () => app.extensionManager.command.execute(`Workspace.ToggleSidebarTab.${SIDEBAR_ID}`);
 
-// The Run on Cloud group lives in the frontend's Run widget, next to its interrupt button, so it moves and docks with it.
+// The cloud Run group lives in the frontend's Run widget, next to its interrupt button, so it moves and docks with it.
 const label = el("span");
-const runButton = el("button", { type: "button", title: "Run on Cloud (Alt+Enter)", onclick: runOnCloud },
+const runButton = el("button", { type: "button", title: "Run in the cloud (Alt+Enter)", onclick: runOnCloud },
   el("i", { className: "pi pi-cloud-upload", style: "font-size: 14px" }), label);
 const menuButton = el("button", { type: "button", title: "Cloud endpoint", onclick: () => toggleMenu() });
 const group = el("div", {}, runButton, menuButton);
@@ -78,7 +78,7 @@ function sync() {
   setIfChanged(runButton, "className", run.className);
   setIfChanged(menuButton, "className", trigger.className);
   setIfChanged(menuButton, "innerHTML", trigger.innerHTML);
-  setIfChanged(label, "textContent", cloud.selected ? `Run on Cloud · ${cloud.selected}` : "Run on Cloud");
+  setIfChanged(label, "textContent", cloud.selected ? `Run · ${cloud.selected}` : "Run");
   setIfChanged(cancelButton, "className", `${BUTTON} ${cloud.running.length ? VARIANT.destructive : VARIANT.secondary} size-8 rounded-lg`);
   setIfChanged(cancelButton, "disabled", !cloud.running.length);
   const interrupt = [...row.children].find((child) => child.contains(run))?.nextElementSibling;
@@ -135,7 +135,7 @@ api.addEventListener("status", updateRunning);
 
 app.registerExtension({
   name: "comfy_cloud_run.RunOnCloud",
-  commands: [{ id: "CloudRun.QueuePrompt", label: "Run on Cloud", icon: "pi pi-cloud-upload", function: runOnCloud }],
+  commands: [{ id: "CloudRun.QueuePrompt", label: "Run in the cloud", icon: "pi pi-cloud-upload", function: runOnCloud }],
   keybindings: [{ combo: { key: "Enter", alt: true }, commandId: "CloudRun.QueuePrompt" }],
   async setup() {
     await cloud.refresh();
