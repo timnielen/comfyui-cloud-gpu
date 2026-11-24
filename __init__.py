@@ -11,6 +11,7 @@ from .cloud import PLUGIN_DIR, CloudRun, error_response
 ENV_KEYS = ("RUNPOD_API_KEY", "BUCKET_ENDPOINT", "BUCKET_NAME", "BUCKET_KEY", "BUCKET_SECRET")
 ENV_FILE = os.path.join(PLUGIN_DIR, ".env")
 NODE_CLASS_MAPPINGS = {}
+WEB_DIRECTORY = "./web"
 
 
 def load_env():

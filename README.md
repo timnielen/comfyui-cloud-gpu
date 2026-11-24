@@ -2,8 +2,6 @@
 
 Edit workflows in your local ComfyUI, run them on a RunPod Serverless GPU. Progress and results show up in your local GUI, and you don't need the models locally.
 
-> **Status:** the cloud side is done. The **Run on Cloud** button is coming next.
-
 You need a [RunPod](https://www.runpod.io) account, an S3-compatible bucket such as [Cloudflare R2](https://developers.cloudflare.com/r2/), and a GitHub account.
 
 ## Setup
@@ -42,6 +40,10 @@ In the plugin folder, copy `.env.example` to `.env` and fill it in:
 - `BUCKET_*`: the same bucket values as in step 3.
 
 `.env` is not committed, and it stays on your computer.
+
+## Running
+
+Press **Run on Cloud** next to the Run button, or **Alt+Enter**. The run shows up in the queue like a local one, and outputs are saved to your local `output/` folder. You can run locally and in the cloud at the same time.
 
 ## Changing what's in the cloud
 

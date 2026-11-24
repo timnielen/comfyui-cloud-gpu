@@ -2,7 +2,7 @@
 
 Job input:
   {"prompt_id": "<uuid>", "prompt": {...API prompt...}, "extra_data": {"extra_pnginfo": {...}},
-   "inputs": [{"path": "sub/name.png", "url": "<presigned GET>"}]}
+   "partial_execution_targets": [...], "inputs": [{"path": "sub/name.png", "url": "<presigned GET>"}]}
 
 Every yield is a list of events, read through RunPod's /stream:
   {"type": "rejected", "error": {...}, "node_errors": {...}}   the remote /prompt returned 400
@@ -30,6 +30,7 @@ COMFY_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.p
 COMFY_URL = "http://127.0.0.1:8188"
 DIRS = {kind: os.path.join(COMFY_DIR, kind) for kind in ("input", "output", "temp")}
 BATCH_SECONDS = 0.5
+PROMPT_KEYS = ("prompt", "extra_data", "partial_execution_targets")  # job input passed on to ComfyUI's /prompt
 URL_EXPIRY = 7 * 86400
 
 BUCKET = os.environ["OUT_BUCKET_NAME"]
@@ -120,11 +121,11 @@ async def prompt_events(ws, prompt_id):
             deadline = time.monotonic() + BATCH_SECONDS
 
 
-async def run_prompt(session, prompt_id, prompt, extra_data):
+async def run_prompt(session, prompt_id, body):
     client_id = uuid.uuid4().hex
     # Connect before queueing so no event of this prompt is missed.
     async with session.ws_connect(f"{COMFY_URL}/ws?clientId={client_id}", max_msg_size=0) as ws:
-        async with session.post(COMFY_URL + "/prompt", json={"prompt": prompt, "prompt_id": prompt_id, "client_id": client_id, "extra_data": extra_data}) as r:
+        async with session.post(COMFY_URL + "/prompt", json={**body, "prompt_id": prompt_id, "client_id": client_id}) as r:
             body = await r.json()
         if r.status != 200:
             yield [{"type": "rejected", "error": body.get("error"), "node_errors": body.get("node_errors", {})}]
@@ -149,7 +150,7 @@ async def handler(job):
         inputs = [local_path("input", "", item["path"]) for item in inp.get("inputs", [])]
         try:
             await asyncio.gather(*(download(session, item["url"], path) for item, path in zip(inp.get("inputs", []), inputs)))
-            async with contextlib.aclosing(run_prompt(session, inp["prompt_id"], inp["prompt"], inp.get("extra_data", {}))) as batches:
+            async with contextlib.aclosing(run_prompt(session, inp["prompt_id"], {k: inp[k] for k in PROMPT_KEYS if k in inp})) as batches:
                 async for batch in batches:
                     yield batch
         finally:

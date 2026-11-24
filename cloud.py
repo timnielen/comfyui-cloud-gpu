@@ -66,7 +66,7 @@ class CloudJob:
         self.workflow_metadata = workflow_metadata
         self.status = "FAILED"
         self.error = "Lost track of the cloud job."
-        self.rejected = False
+        self.error_node = (None, None)
         self.messages = []
         self.outputs = {}
         self.meta = {}
@@ -169,6 +169,8 @@ class CloudRun:
         job_input = {"prompt_id": prompt_id, "prompt": prompt}
         if "extra_pnginfo" in extra_data:  # workflow embedded in the saved files
             job_input["extra_data"] = {"extra_pnginfo": extra_data["extra_pnginfo"]}
+        if "partial_execution_targets" in json_data:
+            job_input["partial_execution_targets"] = json_data["partial_execution_targets"]
 
         try:
             job_input["inputs"] = await asyncio.to_thread(self.upload_inputs, prompt)
@@ -205,9 +207,13 @@ class CloudRun:
         if kind == "accepted":
             return
         if kind == "rejected":
-            job.rejected = True
-            job.error = (event.get("error") or {}).get("message", "The cloud worker rejected the prompt.")
-            self.send(job, "cloud_prompt_rejected", {"prompt_id": job.prompt_id, "error": event.get("error"), "node_errors": event.get("node_errors", {})})
+            # Reported by finish() as an execution_error on the first failing node, which the frontend highlights.
+            node_errors = event.get("node_errors") or {}
+            lines = [f"{n['class_type']} #{node_id}: {e['message']}: {e['details']}" for node_id, n in node_errors.items() for e in n["errors"]]
+            job.error = "The cloud worker rejected the prompt.\n" + "\n".join(lines or [(event.get("error") or {}).get("message", "")])
+            if node_errors:
+                node_id = next(iter(node_errors))
+                job.error_node = (node_id, node_errors[node_id]["class_type"])
             return
         if kind == "executing" and data.get("node") is None:
             return  # sent by finish(), after the history entry exists, like a local run
@@ -265,12 +271,11 @@ class CloudRun:
             job.messages.append(("execution_interrupted", data))
             self.send(job, "execution_interrupted", data)
         elif not ended:
-            data = {"prompt_id": job.prompt_id, "node_id": None, "node_type": None, "executed": [],
+            data = {"prompt_id": job.prompt_id, "node_id": job.error_node[0], "node_type": job.error_node[1], "executed": [],
                     "exception_message": job.error, "exception_type": "CloudRunError", "traceback": [],
                     "current_inputs": {}, "current_outputs": [], "timestamp": int(time.time() * 1000)}
             job.messages.append(("execution_error", data))
-            if not job.rejected:  # a rejection was already shown as node errors
-                self.send(job, "execution_error", data)
+            self.send(job, "execution_error", data)
         success = job.status == "COMPLETED" and any(kind == "execution_success" for kind, _ in job.messages)
         self.server.prompt_queue.task_done(
             job.prompt_id, {"outputs": job.outputs, "meta": job.meta},

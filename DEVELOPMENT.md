@@ -8,6 +8,7 @@ How comfy_cloud_run works inside. For setup, see [README.md](README.md).
 |---|---|---|
 | `__init__.py` | local ComfyUI | Reads `.env`, registers `POST /cloud/prompt`, installs the cancel hooks |
 | `cloud.py` | local ComfyUI | RunPod and R2 client; replays the cloud job's events on the local server |
+| `web/cloud_run.js` | browser | Run on Cloud button, Alt+Enter command |
 | `worker/handler.py` | RunPod worker | Starts ComfyUI, runs one prompt per job, streams its events |
 | `tools/gen_dockerfile.py` | your machine | `manifest.json` → `Dockerfile`; `--pin-local` pins the local ComfyUI commit |
 | `endpoints/<name>/` | – | One RunPod endpoint: `manifest.json` and the generated `Dockerfile` |
@@ -24,7 +25,7 @@ Built by RunPod with this repo as build context. Layer order: base → models (o
 
 ```json
 {"prompt_id": "<uuid>", "prompt": {"...": "API prompt"},
- "extra_data": {"extra_pnginfo": {"workflow": {}}},
+ "extra_data": {"extra_pnginfo": {"workflow": {}}}, "partial_execution_targets": ["9"],
  "inputs": [{"path": "sub/face.png", "url": "<presigned GET>"}]}
 ```
 
@@ -52,7 +53,13 @@ Worker details:
 5. `executed`: files are downloaded into the same type and subfolder locally first. If the name is taken, it becomes `<stem>_<prompt id[:8]><ext>`. The event is rewritten to the local names.
 6. At the end it calls `task_done` with the recorded status messages, then sends `executing {node: null}`, the same order as a local run. If no end event came, it records one itself: `execution_interrupted` for `CANCELLED`, otherwise `execution_error` with the RunPod error.
 
-`rejected` is sent to the browser as `cloud_prompt_rejected {prompt_id, error, node_errors}`, and recorded in history as an error.
+`rejected` becomes an `execution_error` on the first failing node, with every node error in the message. The frontend highlights that node and shows the error, as for any execution error. Most rejections should be caught before submitting once local validation against the manifest exists.
+
+## Frontend
+
+`web/cloud_run.js` calls the frontend's own `app.queuePrompt`, so widget updates (e.g. seed randomize), job tracking and error display work as for Run. The queue `number` is the only value that reaches the `/prompt` request body, so it carries a `"cloud"` marker. A wrapper around `api.fetchApi` sees the marker and sends that request to `/cloud/prompt`. Using the marker instead of a global flag keeps a local Run and Run on Cloud clicked back to back apart.
+
+The batch count is always 1: the frontend's batch setting lives in a store that extensions can't read. Frontend 1.59 tracks progress per `prompt_id`, so a local and a cloud job show their own progress side by side.
 
 ### Cancelling
 
