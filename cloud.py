@@ -221,10 +221,11 @@ class CloudRun:
 
     async def stream(self, job):
         url = f"{RUNPOD_API}/{job.endpoint_id}/stream/{job.job_id}"
-        async with aiohttp.ClientSession(headers=self.headers) as session:
+        # No default RunPod headers: this session also downloads outputs from R2, which rejects an extra Authorization header.
+        async with aiohttp.ClientSession() as session:
             while True:
                 try:
-                    async with session.get(url) as r:
+                    async with session.get(url, headers=self.headers) as r:
                         r.raise_for_status()
                         body = await r.json()
                 except aiohttp.ClientResponseError as e:
@@ -244,7 +245,7 @@ class CloudRun:
                     break
                 await asyncio.sleep(POLL_SECONDS)
             if body["status"] != "COMPLETED":
-                async with session.get(f"{RUNPOD_API}/{job.endpoint_id}/status/{job.job_id}") as r:
+                async with session.get(f"{RUNPOD_API}/{job.endpoint_id}/status/{job.job_id}", headers=self.headers) as r:
                     status = await r.json()
                 job.error = str(status.get("error") or f"Cloud job ended with status {body['status']}.")
             job.status = body["status"]

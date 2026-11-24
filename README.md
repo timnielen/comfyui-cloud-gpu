@@ -57,7 +57,9 @@ Open the **Cloud** tab in the sidebar, or **Manage endpoints…** in the Run on 
 - set the RunPod endpoint ID;
 - create new endpoints, e.g. one for Flux and one for MiniMax H3, each with its own models and GPU. For a new endpoint, create a RunPod endpoint for its Dockerfile, as in setup step 3.
 
-Changes are saved to the endpoint's folder in this repo. The cloud image updates after you commit, push and create a new GitHub release.
+Changes are saved to the endpoint's folder in this repo. To update the cloud images, press **Commit, push & release** at the bottom of the tab. It commits the manifest changes, pushes, and creates the next GitHub release, which makes RunPod rebuild. Other uncommitted files in the repo are left alone.
+
+With the [GitHub CLI](https://cli.github.com) installed and logged in (`gh auth login`), the release is created directly. Without it, GitHub's release page opens with everything filled in, and you click **Publish release**.
 
 ### Editing manifests by hand
 

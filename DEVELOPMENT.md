@@ -11,6 +11,7 @@ How comfy_cloud_run works inside. For setup, see [README.md](README.md).
 | `validate.py` | local ComfyUI | Model lists for the cloud: validation against a manifest, cloud models in the GUI's dropdowns |
 | `manifest.py` | local ComfyUI, `tools/` | Loading, checking and saving manifests; Dockerfile generation. No ComfyUI imports |
 | `manage.py` | local ComfyUI | Routes for managing manifests from the GUI; they work without credentials |
+| `release.py` | local ComfyUI | Commit, push and release the plugin repo from the GUI |
 | `web/cloud_run.js` | browser | Run on Cloud group in the Run widget, endpoint menu, cancel button, Alt+Enter |
 | `web/cloud_sidebar.js` | browser | Cloud sidebar tab |
 | `worker/handler.py` | RunPod worker | Starts ComfyUI, runs one prompt per job, streams its events |
@@ -97,6 +98,21 @@ The selected endpoint is kept in `localStorage` (`CloudRun.endpoint`) and sent a
 | `POST /cloud/resolve_commit` | `{"url"}` → current HEAD commit via `git ls-remote`, https URLs only |
 
 Models for "missing" come from the `models` lists that workflows embed in node properties (`{name, url, directory}`).
+
+### Releases
+
+`GET /cloud/release` reports the plugin repo's state:
+- changed files under `endpoints/` and elsewhere;
+- the latest `vX.Y.Z` tag on origin (via `git ls-remote`, because release tags created on GitHub aren't fetched locally) and the commits since it;
+- the next tag (patch bump);
+- whether `gh` is installed.
+
+`POST /cloud/release` (one at a time):
+1. Commits only `endpoints/` as "Update cloud endpoint(s) …".
+2. Runs `git push -u origin HEAD`.
+3. Runs `gh release create <tag> --target <commit>`, or without `gh` returns GitHub's prefilled new-release URL, which the sidebar opens.
+
+Git runs with `GIT_TERMINAL_PROMPT=0`, so missing credentials fail instead of hanging. A release rebuilds every RunPod endpoint connected to the repo.
 
 ### Cancelling
 

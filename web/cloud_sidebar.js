@@ -41,6 +41,8 @@ let modelFolders = [];
 let installedPacks = [];
 let workflowMissing = null;
 let creating = false;
+let releaseStatus = null;
+let releasing = false;
 
 async function save(change) {
   const manifest = structuredClone(cloud.manifest);
@@ -51,8 +53,42 @@ async function save(change) {
     return toast(e.message, "error");
   }
   await cloud.refresh();
-  await checkWorkflow();
-  toast("Saved. Commit, push and create a release to update the cloud image.");
+  await Promise.all([checkWorkflow(), loadReleaseStatus()]);
+}
+
+async function loadReleaseStatus() {
+  const r = await api.fetchApi("/cloud/release");
+  releaseStatus = await r.json();
+  render();
+}
+
+async function publish() {
+  const s = releaseStatus;
+  const steps = [
+    s.endpoint_changes.length && `commit ${s.endpoint_changes.length} changed manifest file(s)`,
+    `push ${s.branch} to GitHub`,
+    s.gh ? `create release ${s.next_release}` : `open GitHub to publish release ${s.next_release}`,
+  ].filter(Boolean);
+  const other = s.other_changes.length ? `\n\n${s.other_changes.length} other uncommitted file(s) are not included.` : "";
+  const ok = await app.extensionManager.dialog.confirm({
+    title: "Update the cloud images",
+    message: `This will ${steps.join(", ")}. RunPod then rebuilds the endpoints from that release.${other}`,
+  });
+  if (!ok) return;
+  releasing = true;
+  render();
+  try {
+    const result = await request("/cloud/release", "POST");
+    if (result.published) toast(`Release ${result.tag} created. RunPod is rebuilding.`);
+    else {
+      window.open(result.url, "_blank");
+      toast(`Pushed. Publish release ${result.tag} on the GitHub page that just opened.`);
+    }
+  } catch (e) {
+    toast(e.message, "error");
+  }
+  releasing = false;
+  await loadReleaseStatus();
 }
 
 function workflowContents() {
@@ -167,13 +203,27 @@ function nodePacksSection(manifest) {
   return section(`Node packs (${manifest.custom_nodes.length})`, ...children);
 }
 
+function releaseSection() {
+  const s = releaseStatus;
+  if (!s) return section("Cloud image", el("div", { style: MUTED, textContent: "Checking…" }));
+  if (s.error) return section("Cloud image", el("div", { style: MUTED, textContent: s.error }));
+  const pending = s.endpoint_changes.length > 0 || s.commits_since_release !== 0;
+  const lines = [s.release ? `Latest release: ${s.release}` : "No release yet."];
+  if (s.endpoint_changes.length) lines.push(`${s.endpoint_changes.length} manifest file(s) changed, not committed yet.`);
+  if (s.commits_since_release) lines.push(`${s.commits_since_release} commit(s) since the last release.`);
+  if (!pending) lines.push("The release matches this repo.");
+  if (s.other_changes.length) lines.push(`${s.other_changes.length} other uncommitted file(s) won't be included.`);
+  const go = button(releasing ? "Working…" : `Commit, push & release ${s.next_release}`, publish);
+  go.disabled = releasing || !pending;
+  return section("Cloud image", ...lines.map((text) => el("div", { style: MUTED, textContent: text })), go);
+}
+
 function render() {
   if (!root) return;
   const manifest = cloud.manifest;
   const content = [endpointSection()];
   if (manifest && !creating) {
-    content.push(runpodSection(cloud.selected, manifest), workflowSection(), modelsSection(manifest), nodePacksSection(manifest),
-      el("div", { style: `${MUTED}; padding: 12px`, textContent: `Saved to endpoints/${cloud.selected}/ in the plugin repo, with its Dockerfile regenerated. The cloud image changes after you commit, push and create a release.` }));
+    content.push(runpodSection(cloud.selected, manifest), workflowSection(), modelsSection(manifest), nodePacksSection(manifest), releaseSection());
   }
   root.replaceChildren(el("div", { style: "display: flex; flex-direction: column; height: 100%; overflow-y: auto" }, ...content));
 }
@@ -197,7 +247,7 @@ app.registerExtension({
           api.fetchApi("/cloud/node_packs").then((r) => r.json()),
           cloud.refresh(),
         ]);
-        await checkWorkflow();
+        await Promise.all([checkWorkflow(), loadReleaseStatus()]);
       },
       destroy: () => { root = null; },
     });
