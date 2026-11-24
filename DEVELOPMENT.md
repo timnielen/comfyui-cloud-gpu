@@ -107,15 +107,17 @@ Models for "missing" come from the `models` lists that workflows embed in node p
 
 Endpoints are user configuration, so they never go into `main`: `endpoints/` is in `.gitignore`. Each endpoint has a deploy branch, `cloud/<name>`. Each commit on it is the current branch's tree plus two files: the endpoint's Dockerfile at the repo root, generated from the manifest at deploy time, and `endpoints/<name>/manifest.json` for reference. RunPod then only needs the branch, because Dockerfile path and build context stay at their defaults.
 
-`GET /cloud/release?endpoint=<name>` builds that tree in a temporary index (`GIT_INDEX_FILE`, `read-tree HEAD`, the Dockerfile blob via `hash-object` and `update-index --cacheinfo`, `add -f` the manifest, `write-tree`), so the real index and working tree are never touched. It then compares the tree with `origin/cloud/<name>` (fetched) and reports:
-- which of the Dockerfile and the manifest changed since the last deploy;
+`GET /cloud/release?endpoint=<name>` builds that tree in a temporary index (`GIT_INDEX_FILE`, `read-tree HEAD`, the Dockerfile blob via `hash-object` and `update-index --cacheinfo`, `add -f` the manifest, `write-tree`), so the real index and working tree are never touched. It then compares the tree with the deployed commit, fetched into `refs/cloud-run/<name>` and reports:
+- whether the Dockerfile changed since the last deploy. Manifest-only edits such as the endpoint ID don't change the image, so they don't count; the branch's manifest copy is updated with the next real deploy;
 - whether HEAD is already contained in the branch;
 - whether the endpoint's latest `<name>-vX.Y.Z` tag on origin points at the branch tip (via `git ls-remote`, because release tags created on GitHub aren't fetched locally);
 - the next tag (patch bump), uncommitted files outside `endpoints/`, and whether `gh` is installed.
 
 `POST /cloud/release?endpoint=<name>` (one at a time):
 1. If anything changed, creates the deploy commit with `git commit-tree`. Its parents are the branch tip and HEAD, the latter only when HEAD isn't in the branch yet, so the plugin history stays connected.
-2. Pushes it with `git push origin <commit>:refs/heads/cloud/<name>`. The local branch and HEAD don't move.
+2. Pushes it to origin's push URL as `refs/heads/cloud/<name>`. The local branch and HEAD don't move.
+
+Neither step uses `refs/remotes/origin/`: a stale `origin/cloud`, e.g. from an old branch named `cloud`, would block creating `origin/cloud/<name>`.
 3. Runs `gh release create <tag> --target <commit>`, or without `gh` returns GitHub's prefilled new-release URL, which the sidebar opens.
 
 Git runs with `GIT_TERMINAL_PROMPT=0`, so missing credentials fail instead of hanging.

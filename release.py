@@ -77,12 +77,17 @@ async def deploy_tree(name, dockerfile):
 
 
 async def deployed_commit(name):
-    """The endpoint branch's commit on origin, fetched, or None before the first deploy."""
+    """The endpoint branch's commit on origin, fetched, or None before the first deploy.
+
+    Fetched from origin's URL into refs/cloud-run/: fetching by remote name would also update refs/remotes/origin/,
+    where a stale origin/cloud ref (or any branch named like a prefix of cloud/<name>) blocks creating origin/cloud/<name>.
+    """
     branch = deploy_branch(name)
     if not await run("git", "ls-remote", "origin", f"refs/heads/{branch}"):
         return None
-    await run("git", "fetch", "-q", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}")
-    return await run("git", "rev-parse", f"refs/remotes/origin/{branch}")
+    url = await run("git", "remote", "get-url", "origin")
+    await run("git", "fetch", "-q", "--no-write-fetch-head", url, f"+refs/heads/{branch}:refs/cloud-run/{name}")
+    return await run("git", "rev-parse", f"refs/cloud-run/{name}")
 
 
 async def is_ancestor(commit, of):
@@ -97,20 +102,20 @@ async def state(name, dockerfile):
     head = await run("git", "rev-parse", "HEAD")
     tree = await deploy_tree(name, dockerfile)
     deployed = await deployed_commit(name)
-    endpoint_files = ("Dockerfile", f"endpoints/{name}")
+    # Only the Dockerfile and the plugin code shape the image. The manifest copy on the branch is just for restoring an
+    # endpoint elsewhere, so manifest-only edits (e.g. the endpoint ID) wait for the next real deploy.
     if deployed:
-        endpoint_changes = (await run("git", "diff", "--name-only", deployed, tree, "--", *endpoint_files)).splitlines()
+        image_changed = bool(await run("git", "diff", "--name-only", deployed, tree, "--", "Dockerfile"))
         code_changes = not await is_ancestor(head, deployed)
     else:
-        endpoint_changes = (await run("git", "ls-tree", "-r", "--name-only", tree, "--", *endpoint_files)).splitlines()
-        code_changes = True
+        image_changed = code_changes = True
     tag, tag_commit = await latest_release(name)
     other = [line[3:] for line in (await run("git", "status", "--porcelain", "--untracked-files=all")).splitlines()]
     return {
         "head": head, "tree": tree, "deployed": deployed,
         "branch": await run("git", "rev-parse", "--abbrev-ref", "HEAD"),
         "deploy_branch": deploy_branch(name),
-        "endpoint_changes": endpoint_changes,
+        "image_changed": image_changed,
         "code_changes": code_changes,
         "released": deployed is not None and tag_commit == deployed,
         "other_changes": [path for path in other if not path.startswith("endpoints/")],
@@ -118,6 +123,7 @@ async def state(name, dockerfile):
         "next_release": next_tag(name, tag),
         "gh": shutil.which("gh") is not None,
         "origin": await run("git", "remote", "get-url", "origin"),
+        "push_url": await run("git", "remote", "get-url", "--push", "origin"),
     }
 
 
@@ -125,11 +131,12 @@ async def release(name, dockerfile):
     """Commit and push cloud/<name> if anything changed, then create the release (with gh) or return a prefilled release page URL."""
     s = await state(name, dockerfile)
     commit = s["deployed"]
-    if s["endpoint_changes"] or s["code_changes"]:
+    if s["image_changed"] or s["code_changes"]:
         parents = ([s["deployed"]] if s["deployed"] else []) + ([s["head"]] if s["code_changes"] else [])
         message = f"Deploy {name} from {s['branch']} {s['head'][:7]}"
         commit = await run("git", "commit-tree", s["tree"], *(arg for parent in parents for arg in ("-p", parent)), "-m", message)
-        await run("git", "push", "origin", f"{commit}:refs/heads/{s['deploy_branch']}")
+        # Pushing to the URL, not the remote name, keeps git from also updating refs/remotes/origin/ (see deployed_commit).
+        await run("git", "push", s["push_url"], f"{commit}:refs/heads/{s['deploy_branch']}")
     tag = s["next_release"]
     if s["gh"]:
         await run("gh", "release", "create", tag, "--target", commit, "--title", tag, "--generate-notes")
@@ -154,7 +161,7 @@ def add_routes(routes, manifests):
             s = await state(*endpoint(request))
         except (GitError, asyncio.TimeoutError) as e:
             return web.json_response({"error": str(e)}, status=500)
-        return web.json_response({k: v for k, v in s.items() if k not in ("head", "tree")})
+        return web.json_response({k: v for k, v in s.items() if k not in ("head", "tree", "push_url")})
 
     @routes.post("/cloud/release")
     async def post_release(request):

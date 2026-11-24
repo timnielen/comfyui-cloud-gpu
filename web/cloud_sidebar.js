@@ -71,7 +71,7 @@ const repoName = (origin) => origin.match(/github\.com[:/](.+?)(\.git)?\/?$/)?.[
 async function publish() {
   const s = releaseStatus;
   const steps = [
-    (s.endpoint_changes.length || s.code_changes) && `commit ${cloud.selected}'s Dockerfile and ${s.branch} to the ${s.deploy_branch} branch and push it to ${repoName(s.origin)}`,
+    (s.image_changed || s.code_changes) && `commit ${cloud.selected}'s Dockerfile and ${s.branch} to the ${s.deploy_branch} branch and push it to ${repoName(s.origin)}`,
     s.gh ? `create release ${s.next_release}` : `open GitHub to publish release ${s.next_release}`,
   ].filter(Boolean);
   const other = s.other_changes.length ? `\n\n${s.other_changes.length} uncommitted file(s) on ${s.branch} are not included.` : "";
@@ -251,11 +251,11 @@ function releaseSection() {
   const s = releaseStatus;
   if (!s) return section("Cloud image", el("div", { style: MUTED, textContent: "Checking…" }));
   if (s.error) return section("Cloud image", el("div", { style: MUTED, textContent: s.error }));
-  const pending = s.endpoint_changes.length > 0 || s.code_changes || !s.released;
+  const pending = s.image_changed || s.code_changes || !s.released;
   const lines = [`Repository: ${repoName(s.origin)}`, s.release ? `Latest release: ${s.release}` : "No release yet."];
-  if (s.endpoint_changes.length) lines.push(`${s.endpoint_changes.length} endpoint file(s) changed since the last deploy.`);
+  if (s.deployed && s.image_changed) lines.push("Models, node packs or the ComfyUI version changed since the last deploy.");
   if (s.code_changes && s.deployed) lines.push(`${s.branch} has commits that aren't deployed yet.`);
-  if (s.deployed && !s.endpoint_changes.length && !s.code_changes && !s.released) lines.push(`The ${s.deploy_branch} branch is ahead of the latest release.`);
+  if (s.deployed && !s.image_changed && !s.code_changes && !s.released) lines.push(`The ${s.deploy_branch} branch is ahead of the latest release.`);
   if (!pending) lines.push("The image is up to date.");
   if (s.other_changes.length) lines.push(`${s.other_changes.length} uncommitted file(s) on ${s.branch} won't be included.`);
   const go = button(releasing ? "Working…" : `Deploy & release ${s.next_release}`, publish);
