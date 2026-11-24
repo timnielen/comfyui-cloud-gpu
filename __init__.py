@@ -6,7 +6,9 @@ import os
 from aiohttp import web
 
 from server import PromptServer
-from .cloud import PLUGIN_DIR, CloudRun, endpoint_names, error_response, load_manifest
+from .cloud import CloudRun, error_response
+from .manage import add_routes
+from .manifest import PLUGIN_DIR, endpoint_names, load_manifest
 from .validate import listed_models, model_lists
 
 ENV_KEYS = ("RUNPOD_API_KEY", "BUCKET_ENDPOINT", "BUCKET_NAME", "BUCKET_KEY", "BUCKET_SECRET")
@@ -79,3 +81,19 @@ async def post_cloud_prompt(request):
     if cloud is None:
         return error_response(503, "Cloud Run is not configured", f"Set {', '.join(missing)} in {ENV_FILE}")
     return await cloud.post_prompt(request)
+
+
+@server.routes.get("/cloud/jobs")
+async def cloud_jobs(request):
+    return web.json_response({"configured": cloud is not None, "running": list(cloud.jobs) if cloud else []})
+
+
+@server.routes.post("/cloud/cancel")
+async def cancel_cloud_jobs(request):
+    """Cancel every running cloud job (the Run on Cloud group's cancel button)."""
+    if cloud is not None:
+        await asyncio.gather(*(cloud.cancel(prompt_id) for prompt_id in list(cloud.jobs)))
+    return web.Response()
+
+
+add_routes(server.routes)

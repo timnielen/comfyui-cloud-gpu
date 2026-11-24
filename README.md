@@ -43,13 +43,23 @@ In the plugin folder, copy `.env.example` to `.env` and fill it in:
 
 ## Running
 
-Press **Run on Cloud** next to the Run button, or **Alt+Enter**. The run shows up in the queue like a local one, and outputs are saved to your local `output/` folder. You can run locally and in the cloud at the same time.
+Press **Run on Cloud** next to the Run button, or **Alt+Enter**. Its arrow picks the endpoint, and its ✕ cancels running cloud jobs. The run shows up in the queue like a local one, and outputs are saved to your local `output/` folder. You can run locally and in the cloud at the same time.
 
 Model dropdowns also list the models of your cloud endpoints, so you can pick them without having them locally. A local Run with such a model reports it as missing.
 
 Before anything is sent, the workflow is checked against the endpoint's manifest. Models or node packs the cloud image doesn't have are marked on the nodes, as they would be for a local run, and no worker is started.
 
 ## Changing what's in the cloud
+
+Open the **Cloud** tab in the sidebar, or **Manage endpoints…** in the Run on Cloud menu. There you can:
+- add and remove models and node packs;
+- add what the open workflow needs but the endpoint lacks;
+- set the RunPod endpoint ID;
+- create new endpoints, e.g. one for Flux and one for MiniMax H3, each with its own models and GPU. For a new endpoint, create a RunPod endpoint for its Dockerfile, as in setup step 3.
+
+Changes are saved to the endpoint's folder in this repo. The cloud image updates after you commit, push and create a new GitHub release.
+
+### Editing manifests by hand
 
 Each endpoint has a manifest, `endpoints/<name>/manifest.json`, that lists what its image contains:
 
@@ -74,6 +84,5 @@ Then commit, push and create a new GitHub release.
 - **Models:** `directory` is the model folder, e.g. `vae`, `loras` or `diffusion_models`. Workflows often list their models in exactly this form, so you can copy them.
 - **Custom nodes:** pin a `commit` (`git ls-remote <url> HEAD`), so you always get the same version.
 - **ComfyUI version:** `python tools/gen_dockerfile.py h3 --pin-local` makes the cloud use the same ComfyUI version as your local install.
-- **More endpoints**, e.g. for other models or GPUs: copy `endpoints/h3/` to a new folder and create a second RunPod endpoint for its Dockerfile.
 
 Developers: see [DEVELOPMENT.md](DEVELOPMENT.md).

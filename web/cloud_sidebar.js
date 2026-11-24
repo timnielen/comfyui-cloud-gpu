@@ -1,0 +1,205 @@
+import { app } from "../../scripts/app.js";
+import { api } from "../../scripts/api.js";
+import { BUTTON, SIDEBAR_ID, VARIANT, cloud, el } from "./cloud_run.js";
+
+// Manage endpoint manifests: models, node packs, the RunPod endpoint ID, and new endpoints.
+const INPUT = "width: 100%; min-width: 0; box-sizing: border-box; background: var(--comfy-input-bg); color: var(--input-text); border: 1px solid var(--border-color); border-radius: 6px; padding: 4px 6px; font-size: 12px";
+const MUTED = "font-size: 12px; color: var(--color-muted-foreground)";
+const JSON_HEADERS = { "Content-Type": "application/json" };
+
+const button = (text, onclick, variant = "secondary") => el("button", {
+  type: "button", textContent: text, onclick, className: `${BUTTON} ${VARIANT[variant]}`,
+  style: "height: 28px; padding: 0 10px; font-size: 12px; border-radius: 6px; flex-shrink: 0",
+});
+const row = (...children) => el("div", { style: "display: flex; gap: 6px; align-items: center" }, ...children);
+const section = (title, ...children) => el("div", { style: "display: flex; flex-direction: column; gap: 6px; padding: 12px; border-bottom: 1px solid var(--border-color)" },
+  el("div", { textContent: title, style: "font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-muted-foreground)" }), ...children);
+const input = (props) => el("input", { style: INPUT, ...props });
+const select = (options, value) => {
+  const s = el("select", { style: INPUT }, ...options.map((o) => el("option", { value: o, textContent: o })));
+  s.value = value;
+  return s;
+};
+const item = (text, onRemove) => row(el("span", { textContent: text, title: text, style: "flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px" }),
+  button("✕", onRemove, "textonly"));
+
+function toast(detail, severity = "info") {
+  app.extensionManager.toast.add({ severity, summary: "Cloud Run", detail, life: severity === "error" ? 8000 : 4000 });
+}
+
+async function request(route, method, body) {
+  const r = await api.fetchApi(route, { method, headers: JSON_HEADERS, body: body && JSON.stringify(body) });
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error);
+  return data;
+}
+
+const fileName = (url) => decodeURIComponent(url.split(/[?#]/)[0].split("/").pop() ?? "");
+
+let root = null;
+let modelFolders = [];
+let installedPacks = [];
+let workflowMissing = null;
+let creating = false;
+
+async function save(change) {
+  const manifest = structuredClone(cloud.manifest);
+  change(manifest);
+  try {
+    await request(`/cloud/endpoints/${cloud.selected}`, "PUT", manifest);
+  } catch (e) {
+    return toast(e.message, "error");
+  }
+  await cloud.refresh();
+  await checkWorkflow();
+  toast("Saved. Commit, push and create a release to update the cloud image.");
+}
+
+function workflowContents() {
+  const graph = app.rootGraph ?? app.graph;
+  const graphs = [graph, ...(graph.subgraphs?.values() ?? [])];
+  const classTypes = new Set();
+  const models = new Map();
+  for (const g of graphs) {
+    for (const node of g.nodes ?? []) {
+      classTypes.add(node.type);
+      for (const m of node.properties?.models ?? []) {
+        if (m?.name && m.url && m.directory) models.set(`${m.directory}/${m.name}`, { name: m.name, directory: m.directory, url: m.url });
+      }
+    }
+  }
+  return { class_types: [...classTypes], models: [...models.values()] };
+}
+
+async function checkWorkflow() {
+  workflowMissing = cloud.selected ? await request(`/cloud/endpoints/${cloud.selected}/missing`, "POST", workflowContents()) : null;
+  render();
+}
+
+async function addNodePack(url, knownCommit) {
+  try {
+    const commit = knownCommit ?? (await request("/cloud/resolve_commit", "POST", { url })).commit;
+    await save((m) => m.custom_nodes.push({ url, commit }));
+  } catch (e) {
+    toast(e.message, "error");
+  }
+}
+
+function endpointSection() {
+  if (creating) {
+    const name = input({ placeholder: "name, e.g. flux" });
+    const copy = el("input", { type: "checkbox" });
+    const create = async () => {
+      try {
+        await request("/cloud/endpoints", "POST", { name: name.value.trim(), copy_from: copy.checked ? cloud.selected : null });
+      } catch (e) {
+        return toast(e.message, "error");
+      }
+      creating = false;
+      await cloud.refresh();
+      cloud.select(name.value.trim());
+      await checkWorkflow();
+    };
+    return section("New endpoint", name,
+      el("label", { style: `${MUTED}; display: flex; gap: 6px; align-items: center` }, copy, `Copy models and nodes from ${cloud.selected ?? "–"}`),
+      row(button("Create", create), button("Cancel", () => { creating = false; render(); }, "textonly")));
+  }
+  const choice = select(cloud.endpoints.map((e) => e.name), cloud.selected);
+  choice.onchange = async () => { cloud.select(choice.value); await checkWorkflow(); };
+  return section("Endpoint", row(choice, button("New…", () => { creating = true; render(); })));
+}
+
+function runpodSection(name, manifest) {
+  const id = input({ value: manifest.endpoint_id, placeholder: "RunPod endpoint ID" });
+  const children = [row(id, button("Save", () => save((m) => { m.endpoint_id = id.value.trim(); })))];
+  if (!manifest.endpoint_id) {
+    children.push(el("div", { style: MUTED, innerHTML: `Create it in RunPod: Serverless → New Endpoint → GitHub repo, Dockerfile path <code>endpoints/${name}/Dockerfile</code>, build context <code>.</code>, then paste its ID here.` }));
+  }
+  return section("RunPod endpoint", ...children);
+}
+
+function workflowSection() {
+  if (!workflowMissing) return section("This workflow", el("div", { style: MUTED, textContent: "Checking…" }));
+  const { node_packs: packs, models } = workflowMissing;
+  const children = [];
+  if (!packs.length && !models.length) children.push(el("div", { style: MUTED, textContent: "Everything this workflow lists is in the manifest." }));
+  for (const pack of packs) {
+    children.push(row(el("span", { textContent: `Node pack ${pack.name}`, style: "flex: 1; font-size: 12px" }),
+      pack.url ? button("Add", () => addNodePack(pack.url, pack.commit)) : el("span", { style: MUTED, textContent: "add its git URL below" })));
+  }
+  for (const model of models) {
+    children.push(row(el("span", { textContent: `${model.directory}/${model.name}`, title: model.url, style: "flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 12px" }),
+      button("Add", () => save((m) => m.models.push(model)))));
+  }
+  if (models.length > 1) children.push(button("Add all models", () => save((m) => m.models.push(...models))));
+  children.push(el("div", { style: MUTED, textContent: "Models are found through the download links workflows embed in their loader nodes. Others can be added below." }));
+  return section("Missing for this workflow", ...children, button("Check again", checkWorkflow, "textonly"));
+}
+
+function modelsSection(manifest) {
+  const url = input({ placeholder: "Download URL" });
+  const name = input({ placeholder: "File name" });
+  const folder = select(modelFolders, "diffusion_models");
+  url.oninput = () => { name.value = fileName(url.value); };
+  const add = () => {
+    if (!url.value.trim() || !name.value.trim()) return toast("Enter a download URL and a file name.", "warn");
+    save((m) => m.models.push({ name: name.value.trim(), directory: folder.value, url: url.value.trim() }));
+  };
+  return section(`Models (${manifest.models.length})`,
+    ...manifest.models.map((model, i) => item(`${model.directory}/${model.name}`, () => save((m) => m.models.splice(i, 1)))),
+    url, row(folder, name), button("Add model", add));
+}
+
+function nodePacksSection(manifest) {
+  const inManifest = new Set(manifest.custom_nodes.map((n) => fileName(n.url).replace(/\.git$/, "").toLowerCase()));
+  const installed = installedPacks.filter((p) => !inManifest.has(p.name.toLowerCase()));
+  const children = manifest.custom_nodes.map((node, i) =>
+    item(`${fileName(node.url).replace(/\.git$/, "")} @ ${(node.commit ?? "latest").slice(0, 7)}`, () => save((m) => m.custom_nodes.splice(i, 1))));
+  if (installed.length) {
+    const choice = select(installed.map((p) => p.name), installed[0].name);
+    children.push(row(choice, button("Add installed", () => {
+      const pack = installed.find((p) => p.name === choice.value);
+      addNodePack(pack.url, pack.commit);
+    })));
+  }
+  const url = input({ placeholder: "https://github.com/owner/repo" });
+  children.push(row(url, button("Add", () => addNodePack(url.value.trim()))));
+  return section(`Node packs (${manifest.custom_nodes.length})`, ...children);
+}
+
+function render() {
+  if (!root) return;
+  const manifest = cloud.manifest;
+  const content = [endpointSection()];
+  if (manifest && !creating) {
+    content.push(runpodSection(cloud.selected, manifest), workflowSection(), modelsSection(manifest), nodePacksSection(manifest),
+      el("div", { style: `${MUTED}; padding: 12px`, textContent: `Saved to endpoints/${cloud.selected}/ in the plugin repo, with its Dockerfile regenerated. The cloud image changes after you commit, push and create a release.` }));
+  }
+  root.replaceChildren(el("div", { style: "display: flex; flex-direction: column; height: 100%; overflow-y: auto" }, ...content));
+}
+
+window.addEventListener("cloud-run:changed", render);
+
+app.registerExtension({
+  name: "comfy_cloud_run.Sidebar",
+  setup() {
+    app.extensionManager.registerSidebarTab({
+      id: SIDEBAR_ID,
+      icon: "pi pi-cloud",
+      title: "Cloud",
+      tooltip: "Cloud endpoints",
+      type: "custom",
+      render: async (element) => {
+        root = element;
+        render();
+        [modelFolders, installedPacks] = await Promise.all([
+          api.fetchApi("/models").then((r) => r.json()).then((f) => f.filter((x) => x !== "custom_nodes" && x !== "configs")),
+          api.fetchApi("/cloud/node_packs").then((r) => r.json()),
+          cloud.refresh(),
+        ]);
+        await checkWorkflow();
+      },
+      destroy: () => { root = null; },
+    });
+  },
+});

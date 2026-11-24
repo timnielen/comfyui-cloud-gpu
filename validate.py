@@ -4,6 +4,7 @@ import contextvars
 import execution
 import folder_paths
 import nodes
+from .manifest import pack_name
 
 NOT_MODEL_FOLDERS = {"configs", "custom_nodes"}
 CORE_FILE_NODES = {"websocket_image_save"}  # shipped in ComfyUI's own custom_nodes folder, so the image has it too
@@ -39,14 +40,24 @@ def model_lists(*manifests):
     return models
 
 
+def node_pack(class_type):
+    """The custom_nodes folder a node class comes from, or None for core nodes and files shipped with ComfyUI."""
+    class_def = nodes.NODE_CLASS_MAPPINGS.get(class_type)
+    parent, _, pack = (getattr(class_def, "RELATIVE_PYTHON_MODULE", None) or "").partition(".")
+    return pack if parent == "custom_nodes" and pack not in CORE_FILE_NODES else None
+
+
+def manifest_packs(manifest):
+    return {pack_name(n["url"]).lower() for n in manifest["custom_nodes"]}
+
+
 def missing_node_packs(prompt, manifest, endpoint):
     """node_errors for nodes from a locally installed pack that the manifest doesn't install."""
-    packs = {n["url"].rstrip("/").rsplit("/", 1)[-1].removesuffix(".git").lower() for n in manifest["custom_nodes"]}
+    packs = manifest_packs(manifest)
     node_errors = {}
     for node_id, node in prompt.items():
-        class_def = nodes.NODE_CLASS_MAPPINGS.get(node.get("class_type"))
-        parent, _, pack = (getattr(class_def, "RELATIVE_PYTHON_MODULE", None) or "").partition(".")
-        if parent != "custom_nodes" or pack.lower() in packs or pack in CORE_FILE_NODES:
+        pack = node_pack(node.get("class_type"))
+        if pack is None or pack.lower() in packs:
             continue
         error = {"type": "cloud_missing_node_pack", "message": "Node pack is not in the cloud image",
                  "details": f"{pack}: add it to endpoints/{endpoint}/manifest.json", "extra_info": {}}

@@ -1,7 +1,6 @@
 """Send prompts to a RunPod Serverless endpoint and replay the worker's ComfyUI events on the local server."""
 import asyncio
 import hashlib
-import json
 import logging
 import os
 import time
@@ -16,10 +15,9 @@ import execution
 import folder_paths
 from comfy_execution.jobs import validate_job_id
 from server import valid_workflow_metadata, workflow_metadata_from_prompt
+from .manifest import ENDPOINTS_DIR, endpoint_names, load_manifest
 from .validate import validate_cloud_prompt
 
-PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
-ENDPOINTS_DIR = os.path.join(PLUGIN_DIR, "endpoints")
 RUNPOD_API = "https://api.runpod.ai/v2"
 POLL_SECONDS = 1.0
 URL_EXPIRY = 86400
@@ -32,15 +30,6 @@ def error_response(status, message, details=""):
     """A /prompt-shaped error, so the frontend shows it like a local one."""
     error = {"type": "cloud_run_error", "message": message, "details": details, "extra_info": {}}
     return web.json_response({"error": error, "node_errors": {}}, status=status)
-
-
-def endpoint_names():
-    return sorted(n for n in os.listdir(ENDPOINTS_DIR) if os.path.isfile(os.path.join(ENDPOINTS_DIR, n, "manifest.json")))
-
-
-def load_manifest(name):
-    with open(os.path.join(ENDPOINTS_DIR, name, "manifest.json"), encoding="utf-8") as f:
-        return json.load(f)
 
 
 def file_digest(path):

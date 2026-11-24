@@ -2,8 +2,10 @@ import json
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
-from gen_dockerfile import dockerfile, format_manifest
+import pytest
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from manifest import check_manifest, dockerfile, format_manifest
 
 MANIFEST = {
     "endpoint_id": "",
@@ -34,3 +36,13 @@ def test_format_manifest_round_trips():
     text = format_manifest(MANIFEST)
     assert json.loads(text) == MANIFEST
     assert '\n    {"url": "https://github.com/a/NodePack.git", "commit": "abc123"},\n' in text
+
+
+@pytest.mark.parametrize("directory", ["../escape", "/abs", "a/../b", "back\\slash"])
+def test_check_manifest_rejects_unsafe_model_paths(directory):
+    with pytest.raises(ValueError):
+        check_manifest({**MANIFEST, "models": [{"name": "m.safetensors", "directory": directory, "url": "https://x"}]})
+
+
+def test_check_manifest_accepts_valid():
+    check_manifest({**MANIFEST, "models": [{"name": "sub dir/m (1).safetensors", "directory": "diffusion_models", "url": "https://x"}]})

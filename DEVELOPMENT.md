@@ -9,9 +9,12 @@ How comfy_cloud_run works inside. For setup, see [README.md](README.md).
 | `__init__.py` | local ComfyUI | Reads `.env`, registers `POST /cloud/prompt`, installs the cancel hooks |
 | `cloud.py` | local ComfyUI | RunPod and R2 client; replays the cloud job's events on the local server |
 | `validate.py` | local ComfyUI | Model lists for the cloud: validation against a manifest, cloud models in the GUI's dropdowns |
-| `web/cloud_run.js` | browser | Run on Cloud button, Alt+Enter command |
+| `manifest.py` | local ComfyUI, `tools/` | Loading, checking and saving manifests; Dockerfile generation. No ComfyUI imports |
+| `manage.py` | local ComfyUI | Routes for managing manifests from the GUI; they work without credentials |
+| `web/cloud_run.js` | browser | Run on Cloud group in the Run widget, endpoint menu, cancel button, Alt+Enter |
+| `web/cloud_sidebar.js` | browser | Cloud sidebar tab |
 | `worker/handler.py` | RunPod worker | Starts ComfyUI, runs one prompt per job, streams its events |
-| `tools/gen_dockerfile.py` | your machine | `manifest.json` → `Dockerfile`; `--pin-local` pins the local ComfyUI commit |
+| `tools/gen_dockerfile.py` | your machine | CLI around `manifest.py`: regenerate a Dockerfile; `--pin-local` pins the local ComfyUI commit |
 | `endpoints/<name>/` | – | One RunPod endpoint: `manifest.json` and the generated `Dockerfile` |
 
 The plugin loads on the worker too, because the image copies it into `custom_nodes/`. Without `.env` it only registers a route that answers "not configured", and installs no hooks.
@@ -72,6 +75,28 @@ Before that, any node whose `RELATIVE_PYTHON_MODULE` is `custom_nodes.<pack>` fa
 `web/cloud_run.js` calls the frontend's own `app.queuePrompt`, so widget updates (e.g. seed randomize), job tracking and error display work as for Run. The queue `number` is the only value that reaches the `/prompt` request body, so it carries a `"cloud"` marker. A wrapper around `api.fetchApi` sees the marker and sends that request to `/cloud/prompt`. Using the marker instead of a global flag keeps a local Run and Run on Cloud clicked back to back apart.
 
 The batch count is always 1: the frontend's batch setting lives in a store that extensions can't read. Frontend 1.59 tracks progress per `prompt_id`, so a local and a cloud job show their own progress side by side.
+
+### Run on Cloud group
+
+The frontend's Run widget (`[data-testid=actionbar-panel]`) has no extension slot, so `cloud_run.js` inserts its own elements after the widget's interrupt button. They then move and dock with the widget.
+- A MutationObserver re-inserts them when Vue re-renders the row, and copies the Run group's current class names, so the look follows the frontend's theme and state. It only writes values that changed, so it can't trigger itself.
+- The ✕ calls `POST /cloud/cancel` and is enabled while `GET /cloud/jobs` (refreshed on every `status` event) lists running jobs.
+- The frontend's own ✕ also counts cloud jobs as cancellable. If clicked, the cancel hooks cancel the cloud job on RunPod.
+
+The selected endpoint is kept in `localStorage` (`CloudRun.endpoint`) and sent as `cloud_endpoint`.
+
+### Sidebar and management routes
+
+| Route | Purpose |
+|---|---|
+| `GET /cloud/endpoints` | All endpoints with their manifests |
+| `POST /cloud/endpoints` | `{"name", "copy_from"?}`: new endpoint, ComfyUI pinned to the local commit (or `v<version>` without git) |
+| `PUT /cloud/endpoints/{name}` | Save a manifest (checked by `check_manifest`) and regenerate its Dockerfile |
+| `POST /cloud/endpoints/{name}/missing` | `{"class_types", "models"}` from the open workflow → node packs and models the manifest lacks |
+| `GET /cloud/node_packs` | Locally installed git node packs with URL and commit (`app.deploy_to_cloud.scan_custom_nodes`) |
+| `POST /cloud/resolve_commit` | `{"url"}` → current HEAD commit via `git ls-remote`, https URLs only |
+
+Models for "missing" come from the `models` lists that workflows embed in node properties (`{name, url, directory}`).
 
 ### Cancelling
 
