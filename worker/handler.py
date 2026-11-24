@@ -2,7 +2,7 @@
 
 Job input:
   {"prompt_id": "<uuid>", "prompt": {...API prompt...}, "extra_data": {"extra_pnginfo": {...}},
-   "partial_execution_targets": [...], "inputs": [{"path": "sub/name.png", "url": "<presigned GET>"}],
+   "partial_execution_targets": [...], "inputs": [{"path": "sub/name.png", "url": "<presigned GET>" or "data": "<base64>"}],
    "runtime": {"models": [{"name", "directory", "url"}], "custom_nodes": [{"url", "commit"}]}}
 Runtime models and node packs are manifest entries left out of the image; missing ones are installed before the job.
 
@@ -10,12 +10,15 @@ Every yield is a list of events, read through RunPod's /stream:
   {"type": "rejected", "error": {...}, "node_errors": {...}}   the remote /prompt returned 400
   {"type": "accepted", "node_errors": {...}}
   {"type": "<ComfyUI websocket event>", "data": {...}}         events of this prompt only
-"executed" events also carry "files": [{"filename", "subfolder", "type", "url"}] with presigned R2 URLs.
+  {"type": "file_chunk", "id": "<file id>", "data": "<base64>"}  without a bucket, before the "executed" event that uses it
+"executed" events also carry "files": [{"filename", "subfolder", "type", "url"}] with presigned bucket URLs, or without
+a bucket {..., "inline": "<file id>"}: the file was streamed in the file_chunk items before, each under RunPod's 1 MB limit.
 The stream ends after ComfyUI's final {"type": "executing", "data": {"node": null}}.
 
-Endpoint env vars: BUCKET_ENDPOINT, BUCKET_NAME, BUCKET_KEY, BUCKET_SECRET
+Optional endpoint env vars, all or none: BUCKET_ENDPOINT, BUCKET_NAME, BUCKET_KEY, BUCKET_SECRET
 """
 import asyncio
+import base64
 import contextlib
 import importlib.metadata
 import mimetypes
@@ -38,10 +41,16 @@ BATCH_SECONDS = 0.5
 PROMPT_KEYS = ("prompt", "extra_data", "partial_execution_targets")  # job input passed on to ComfyUI's /prompt
 URL_EXPIRY = 7 * 86400
 
-BUCKET = os.environ["BUCKET_NAME"]
-s3 = boto3.client("s3", endpoint_url=os.environ["BUCKET_ENDPOINT"], region_name="auto",
-                  aws_access_key_id=os.environ["BUCKET_KEY"],
-                  aws_secret_access_key=os.environ["BUCKET_SECRET"])
+INLINE_CHUNK_BYTES = 600 * 1000  # ~800 KB as base64, under RunPod's 1 MB per stream item
+
+BUCKET_KEYS = ("BUCKET_ENDPOINT", "BUCKET_NAME", "BUCKET_KEY", "BUCKET_SECRET")
+if any(os.environ.get(k) for k in BUCKET_KEYS):
+    BUCKET = os.environ["BUCKET_NAME"]  # a KeyError here names the missing variable of a half-configured bucket
+    s3 = boto3.client("s3", endpoint_url=os.environ["BUCKET_ENDPOINT"], region_name="auto",
+                      aws_access_key_id=os.environ["BUCKET_KEY"],
+                      aws_secret_access_key=os.environ["BUCKET_SECRET"])
+else:
+    BUCKET = s3 = None  # outputs are streamed inline
 comfy = None
 
 
@@ -151,6 +160,13 @@ def upload(prompt_id, file):
     return s3.generate_presigned_url("get_object", Params={"Bucket": BUCKET, "Key": key}, ExpiresIn=URL_EXPIRY)
 
 
+def inline_chunks(file, file_id):
+    """Stream items carrying one output file, for a worker without a bucket."""
+    with open(local_path(file["type"], file.get("subfolder", ""), file["filename"]), "rb") as f:
+        for part in iter(lambda: f.read(INLINE_CHUNK_BYTES), b""):
+            yield {"type": "file_chunk", "id": file_id, "data": base64.b64encode(part).decode()}
+
+
 def output_files(output):
     return [f for value in (output or {}).values() if isinstance(value, list)
             for f in value if isinstance(f, dict) and "filename" in f and "type" in f]
@@ -175,8 +191,18 @@ async def prompt_events(ws, prompt_id):
         data = event.get("data") or {}
         if data.get("prompt_id") != prompt_id:
             continue
-        if event["type"] == "executed":
+        if event["type"] == "executed" and s3 is not None:
             event["files"] = [{**f, "url": await asyncio.to_thread(upload, prompt_id, f)} for f in output_files(data.get("output"))]
+        elif event["type"] == "executed":
+            if batch:  # the events before this one go out first, then its files, then the event itself
+                yield batch
+                batch, deadline = [], None
+            event["files"] = []
+            for f in output_files(data.get("output")):
+                file_id = uuid.uuid4().hex
+                for chunk in inline_chunks(f, file_id):
+                    yield [chunk]
+                event["files"].append({**f, "inline": file_id})
         batch.append(event)
         if event["type"] == "executing" and data.get("node") is None:
             yield batch
@@ -214,7 +240,12 @@ async def handler(job):
         await prepare_runtime(session, inp.get("runtime", {}))
         inputs = [local_path("input", "", item["path"]) for item in inp.get("inputs", [])]
         try:
-            await asyncio.gather(*(download(session, item["url"], path) for item, path in zip(inp.get("inputs", []), inputs)))
+            for item, path in zip(inp.get("inputs", []), inputs):
+                if "data" in item:  # sent inline by a client without a bucket
+                    os.makedirs(os.path.dirname(path), exist_ok=True)
+                    with open(path, "wb") as f:
+                        f.write(base64.b64decode(item["data"]))
+            await asyncio.gather(*(download(session, item["url"], path) for item, path in zip(inp.get("inputs", []), inputs) if "url" in item))
             async with contextlib.aclosing(run_prompt(session, inp["prompt_id"], {k: inp[k] for k in PROMPT_KEYS if k in inp})) as batches:
                 async for batch in batches:
                     yield batch
@@ -227,4 +258,5 @@ async def handler(job):
 
 if __name__ == "__main__":
     start_comfy()
-    runpod.serverless.start({"handler": handler, "return_aggregate_stream": True})
+    # No return_aggregate_stream: the client reads /stream, and aggregating inline output files would store them twice.
+    runpod.serverless.start({"handler": handler})

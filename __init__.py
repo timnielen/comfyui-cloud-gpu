@@ -11,7 +11,8 @@ from . import manage, manifest, release
 from .manifest import PLUGIN_DIR, endpoint_names, load_manifest
 from .validate import listed_models, model_lists
 
-ENV_KEYS = ("RUNPOD_API_KEY", "BUCKET_ENDPOINT", "BUCKET_NAME", "BUCKET_KEY", "BUCKET_SECRET")
+BUCKET_KEYS = ("BUCKET_ENDPOINT", "BUCKET_NAME", "BUCKET_KEY", "BUCKET_SECRET")  # optional, but all or none
+ENV_KEYS = ("RUNPOD_API_KEY", *BUCKET_KEYS)
 ENV_FILE = os.path.join(PLUGIN_DIR, ".env")
 NODE_CLASS_MAPPINGS = {}
 WEB_DIRECTORY = "./web"
@@ -32,7 +33,9 @@ def load_env():
 
 server = PromptServer.instance
 env = load_env()
-missing = [k for k in ENV_KEYS if not env.get(k)]
+missing = [] if env.get("RUNPOD_API_KEY") else ["RUNPOD_API_KEY"]
+if any(env.get(k) for k in BUCKET_KEYS):  # half a bucket configuration is a mistake, not "no bucket"
+    missing += [k for k in BUCKET_KEYS if not env.get(k)]
 cloud = None if missing else CloudRun(server, env)
 
 if cloud is not None:
@@ -90,15 +93,15 @@ async def cloud_jobs(request):
 
 @server.routes.get("/cloud/bucket")
 async def bucket_usage(request):
-    if cloud is None:
-        return error_response(503, "Cloud Run is not configured", f"Set {', '.join(missing)} in {ENV_FILE}")
-    return web.json_response(await asyncio.to_thread(cloud.bucket_usage))
+    if cloud is None or cloud.s3 is None:
+        return web.json_response({"configured": False})
+    return web.json_response({"configured": True, **await asyncio.to_thread(cloud.bucket_usage)})
 
 
 @server.routes.post("/cloud/bucket/clear")
 async def clear_bucket(request):
-    if cloud is None:
-        return error_response(503, "Cloud Run is not configured", f"Set {', '.join(missing)} in {ENV_FILE}")
+    if cloud is None or cloud.s3 is None:
+        return error_response(400, "No bucket configured", f"Set the BUCKET_* lines in {ENV_FILE}")
     if cloud.jobs:
         return error_response(409, "Cloud jobs are running", "Their inputs and outputs are still needed. Clear the bucket when they are done.")
     return web.json_response({"deleted": await asyncio.to_thread(cloud.clear_bucket)})

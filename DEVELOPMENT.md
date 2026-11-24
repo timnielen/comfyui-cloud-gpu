@@ -31,7 +31,7 @@ Built by RunPod with this repo as build context. Layer order: base → models (o
 ```json
 {"prompt_id": "<uuid>", "prompt": {"...": "API prompt"},
  "extra_data": {"extra_pnginfo": {"workflow": {}}}, "partial_execution_targets": ["9"],
- "inputs": [{"path": "sub/face.png", "url": "<presigned GET>"}],
+ "inputs": [{"path": "sub/face.png", "url": "<presigned GET>"}, {"path": "voice.wav", "data": "<base64>"}],
  "runtime": {"models": [{"name", "directory", "url"}], "custom_nodes": [{"url", "commit"}]}}
 ```
 
@@ -39,8 +39,18 @@ The handler is an async generator, and every yield is a list of events, read thr
 
 - `{"type": "rejected", "error", "node_errors"}`: the worker's ComfyUI returned 400 for the prompt.
 - `{"type": "accepted", "node_errors"}`
-- `{"type": "<ComfyUI websocket event>", "data": {...}}`: only events for this `prompt_id`, batched for 0.5 s. `executed` events also carry `"files": [{"filename", "subfolder", "type", "url"}]`, uploaded to R2 under `outputs/<prompt_id>/...`.
+- `{"type": "<ComfyUI websocket event>", "data": {...}}`: only events for this `prompt_id`, batched for 0.5 s. `executed` events also carry `"files"`: `[{"filename", "subfolder", "type", "url"}]` uploaded to the bucket under `outputs/<prompt_id>/...`, or `[{..., "inline": "<file id>"}]` without a bucket.
+- `{"type": "file_chunk", "id": "<file id>", "data": "<base64>"}`, without a bucket: one per 600 KB of an output file (about 800 KB encoded, under RunPod's 1 MB per stream item), each in its own yield, before the `executed` event that names the file.
 - The stream ends after `{"type": "executing", "data": {"node": null}}`.
+
+### Bucket optional
+
+The bucket is optional on each side, and each side decides independently:
+- **Local `.env` without `BUCKET_*`:** inputs go inline as base64. `post_prompt` refuses (413) a job whose request body would exceed RunPod's 10 MB `/run` limit, before submitting.
+- **Endpoint without `BUCKET_*`:** outputs are streamed as `file_chunk` items. The local side collects them per job (`CloudJob.chunks`) and writes the file when the `executed` event arrives.
+- **Half a bucket configuration** is an error on both sides.
+
+The handler doesn't use `return_aggregate_stream`. The client reads `/stream`, and aggregating inline files would store them a second time in the job's final output. RunPod documents no limit on a job's total streamed size; tested locally with a 4.3 MB output (6 chunks, largest stream item 0.8 MB).
 
 Worker details:
 - ComfyUI starts once per worker and restarts if it died.

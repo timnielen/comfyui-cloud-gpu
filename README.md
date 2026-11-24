@@ -2,7 +2,7 @@
 
 Edit workflows in your local ComfyUI, run them on a RunPod Serverless GPU. Progress and results show up in your local GUI, and you don't need the models locally.
 
-You need a [RunPod](https://runpod.io?ref=hhaqe53o) account, an S3-compatible bucket such as [Cloudflare R2](https://developers.cloudflare.com/r2/), and a GitHub account.
+You need a [RunPod](https://runpod.io?ref=hhaqe53o) account and a GitHub account.
 If you register to RunPod with the link above and deposit $10, we both **earn additional 5$**.
 
 ## Setup
@@ -32,20 +32,9 @@ In the plugin folder, copy `.env.example` to `.env`, then:
 
 1. If you don't have a RunPod account yet, sign up with [this link](https://runpod.io?ref=hhaqe53o) (if you register with it and deposit $10, we both **earn additional 5$**).
 2. In RunPod, create an API key with read/write access (Credentials → Create API Key → Serverless endpoints → tick read and write → Create).
-3. Create a bucket, e.g. in Cloudflare R2, and an API token with read/write access to it (R2: "Object Read & Write").
-4. Add lifecycle rules to the bucket that delete `inputs/` after 1 day and `outputs/` after 7 days.
+3. Put the key into `.env` as `RUNPOD_API_KEY`. `.env` is not committed and stays on your computer.
 
-Fill in `.env`:
-
-| Line | Value |
-|---|---|
-| `RUNPOD_API_KEY` | the RunPod API key |
-| `BUCKET_NAME` | the bucket's name |
-| `BUCKET_ENDPOINT` | the bucket's S3 API endpoint **without** the bucket name, e.g. `https://<account-id>.r2.cloudflarestorage.com` (`<account-id>.eu.r2…` for an EU bucket) |
-| `BUCKET_KEY` | the token's Access Key ID |
-| `BUCKET_SECRET` | the token's Secret Access Key |
-
-R2 also shows a "Token value" for the token; it isn't needed. `.env` is not committed and stays on your computer.
+The other lines in `.env` are for an optional bucket; leave them empty for now. See [Bucket (optional)](#bucket-optional).
 
 ### 3. First endpoint
 
@@ -58,18 +47,15 @@ R2 also shows a "Token value" for the token; it isn't needed. `.env` is not comm
 2. Branch **`cloud/<name>`**, e.g. `cloud/flux`. Leave the Dockerfile path and build context at their defaults.
 3. Choose a GPU with enough VRAM for your models
 4. Idle timeout 1–5 s, execution timeout 3600 s (1 hour), FlashBoot on.
-5. Environment Variables: Add the environment variables `BUCKET_ENDPOINT`, `BUCKET_NAME`, `BUCKET_KEY` and `BUCKET_SECRET`: the same lines as in your `.env`. The worker doesn't need `RUNPOD_API_KEY`, so leave that one out.
-6. Container Configuration: Container disk 20 GB
-7. Advanced: allow **CUDA 13.x** only.
-8. Paste the endpoint's ID into the Cloud tab. If no build starts, press **Deploy & release** again.
+5. Container Configuration: Container disk 20 GB
+6. Advanced: allow **CUDA 13.x** only.
+7. Paste the endpoint's ID into the Cloud tab. If no build starts, press **Deploy & release** again.
 
 ## Running
 
 Press **☁ Cloud · endpoint** (showing the selected endpoint) next to the Run button, or **Alt+Enter**. Its arrow picks the endpoint, and its ✕ cancels running cloud jobs. The run shows up in the queue like a local one, and outputs are saved to your local `output/` folder. You can run locally and in the cloud at the same time.
 
 Model dropdowns also list the models of your cloud endpoints, so you can pick them without having them locally. A local Run with such a model reports it as missing.
-
-The **Cloud** tab's **Bucket** section shows how much of R2's free 10 GB the cloud inputs and outputs use. **Clear bucket** deletes them. Outputs already saved to your `output/` folder are kept.
 
 Before anything is sent, the workflow is checked against the endpoint's manifest. Models or node packs the cloud image doesn't have are marked on the nodes, as they would be for a local run, and no worker is started.
 
@@ -120,3 +106,38 @@ After editing it, press **Deploy & release** in the Cloud tab. To look at the Do
 - **ComfyUI version:** `python tools/gen_dockerfile.py <name> --pin-local` makes the cloud use the same ComfyUI version as your local install.
 
 Developers: see [DEVELOPMENT.md](DEVELOPMENT.md).
+
+## Bucket (optional)
+
+You don't need a bucket to get started. Without one, your input files travel inside the job request, and the worker streams its outputs back in pieces. RunPod accepts 10 MB per job request, so that's about 7 MB of input files per run. That's enough for reference images, short audio and typical video outputs.
+
+A bucket is worth it when:
+- **your inputs are larger,** e.g. reference videos. With a bucket, inputs and outputs go through storage instead of RunPod's API, and unchanged inputs are uploaded only once;
+- **you want outputs kept for a while.** RunPod keeps a job's results for only about 30 minutes, while the bucket keeps them for 7 days. If ComfyUI was closed when a job finished, the plugin doesn't fetch the output later, but you can still download it from the bucket.
+
+Cloudflare R2 fits well: it's free up to 10 GB, and downloads cost nothing.
+
+### Setting it up
+
+1. Create a bucket, e.g. in [Cloudflare R2](https://developers.cloudflare.com/r2/), and an API token with read/write access to it (R2: "Object Read & Write").
+2. Add lifecycle rules to the bucket that delete `inputs/` after 1 day and `outputs/` after 7 days.
+3. Fill in the `BUCKET_*` lines in `.env`, all four:
+
+   | Line | Value |
+   |---|---|
+   | `BUCKET_NAME` | the bucket's name |
+   | `BUCKET_ENDPOINT` | the bucket's S3 API endpoint **without** the bucket name, e.g. `https://<account-id>.r2.cloudflarestorage.com` (`<account-id>.eu.r2…` for an EU bucket) |
+   | `BUCKET_KEY` | the token's Access Key ID |
+   | `BUCKET_SECRET` | the token's Secret Access Key |
+
+   R2 also shows a "Token value" for the token; it isn't needed.
+4. Add the same four lines to your RunPod endpoint's environment variables. The worker doesn't need `RUNPOD_API_KEY`, so leave that one out.
+5. Restart ComfyUI.
+
+The local plugin uses the bucket for inputs, and the worker uses it for outputs. Configure both for the full benefit.
+
+With a bucket, the **Cloud** tab's **Bucket** section shows how much of R2's free 10 GB the cloud inputs and outputs use. **Clear bucket** deletes them. Outputs already saved to your `output/` folder are kept.
+
+## License
+
+[GPL-3.0](LICENSE), the same license as ComfyUI.

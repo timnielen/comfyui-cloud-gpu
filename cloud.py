@@ -1,6 +1,8 @@
 """Send prompts to a RunPod Serverless endpoint and replay the worker's ComfyUI events on the local server."""
 import asyncio
+import base64
 import hashlib
+import json
 import logging
 import os
 import time
@@ -22,6 +24,7 @@ RUNPOD_API = "https://api.runpod.ai/v2"
 POLL_SECONDS = 1.0
 URL_EXPIRY = 86400
 TERMINAL = {"COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"}
+RUNPOD_REQUEST_LIMIT = 10 * 1000 * 1000  # bytes RunPod accepts per /run request
 BUCKET_PREFIXES = ("inputs/", "outputs/")  # everything this plugin and its worker write to the bucket
 END_EVENTS = {"execution_success", "execution_error", "execution_interrupted"}
 HISTORY_EVENTS = {"execution_start", "execution_cached"} | END_EVENTS
@@ -59,6 +62,7 @@ class CloudJob:
         self.error = "Lost track of the cloud job."
         self.error_node = (None, None)
         self.messages = []
+        self.chunks = {}  # inline output files streamed by a worker without a bucket: file id -> base64 parts
         self.outputs = {}
         self.meta = {}
         self.task = None
@@ -68,15 +72,17 @@ class CloudRun:
     def __init__(self, server, env):
         self.server = server
         self.headers = {"Authorization": f"Bearer {env['RUNPOD_API_KEY']}"}
-        self.bucket = env["BUCKET_NAME"]
+        # Without a bucket, input files travel inside the job request instead.
+        self.bucket = env.get("BUCKET_NAME")
         self.s3 = boto3.client("s3", endpoint_url=env["BUCKET_ENDPOINT"], region_name="auto",
-                               aws_access_key_id=env["BUCKET_KEY"], aws_secret_access_key=env["BUCKET_SECRET"])
+                               aws_access_key_id=env["BUCKET_KEY"], aws_secret_access_key=env["BUCKET_SECRET"]) if self.bucket else None
         self.jobs = {}
 
     # Inputs
 
-    def upload_inputs(self, prompt):
-        """Upload every local input file the prompt references, keyed by content so unchanged files upload once."""
+    def job_inputs(self, prompt):
+        """Every local input file the prompt references: uploaded to the bucket (keyed by content, so unchanged files
+        upload once) and passed as a URL, or without a bucket passed inline as base64."""
         input_dir = os.path.realpath(folder_paths.get_input_directory())
         inputs = {}
         for node in prompt.values():
@@ -85,6 +91,11 @@ class CloudRun:
                     continue
                 path = os.path.realpath(folder_paths.get_annotated_filepath(value))
                 if not os.path.isfile(path) or os.path.commonpath((input_dir, path)) != input_dir:
+                    continue
+                relative = os.path.relpath(path, input_dir).replace(os.sep, "/")
+                if self.s3 is None:
+                    with open(path, "rb") as f:
+                        inputs[value] = {"path": relative, "data": base64.b64encode(f.read()).decode()}
                     continue
                 key = f"inputs/{file_digest(path)}{os.path.splitext(path)[1]}"
                 try:
@@ -95,13 +106,15 @@ class CloudRun:
                     logging.info(f"Cloud Run: uploading {os.path.relpath(path, input_dir)}")
                     self.s3.upload_file(path, self.bucket, key)
                 url = self.s3.generate_presigned_url("get_object", Params={"Bucket": self.bucket, "Key": key}, ExpiresIn=URL_EXPIRY)
-                inputs[value] = {"path": os.path.relpath(path, input_dir).replace(os.sep, "/"), "url": url}
+                inputs[value] = {"path": relative, "url": url}
         return list(inputs.values())
 
     # Outputs
 
-    async def download(self, session, prompt_id, file):
-        """Save one worker output under the same type/subfolder locally. Returns the local filename."""
+    async def download(self, session, job, file):
+        """Save one worker output under the same type/subfolder locally. Returns the local filename.
+        It comes from the bucket (url) or was streamed in chunks by a worker without a bucket (inline)."""
+        prompt_id = job.prompt_id
         base = folder_paths.get_directory_by_type(file["type"])
         subfolder = file.get("subfolder", "")
         filename = file["filename"]
@@ -111,6 +124,11 @@ class CloudRun:
             filename = f"{stem}_{prompt_id[:8]}{ext}"
             path = contained_path(base, subfolder, filename)
         os.makedirs(os.path.dirname(path), exist_ok=True)
+        if "inline" in file:
+            with open(path, "wb") as f:
+                for part in job.chunks.pop(file["inline"]):
+                    f.write(base64.b64decode(part))
+            return filename
         async with session.get(file["url"]) as r:
             r.raise_for_status()
             with open(path, "wb") as f:
@@ -122,7 +140,7 @@ class CloudRun:
         """The executed output with each file renamed to where it was saved locally."""
         renamed = {}
         for file in files:
-            renamed[(file["type"], file.get("subfolder", ""), file["filename"])] = await self.download(session, job.prompt_id, file)
+            renamed[(file["type"], file.get("subfolder", ""), file["filename"])] = await self.download(session, job, file)
 
         def local(item):
             if isinstance(item, dict) and (item.get("type"), item.get("subfolder", ""), item.get("filename")) in renamed:
@@ -171,9 +189,13 @@ class CloudRun:
             job_input["runtime"] = runtime
 
         try:
-            job_input["inputs"] = await asyncio.to_thread(self.upload_inputs, prompt)
+            job_input["inputs"] = await asyncio.to_thread(self.job_inputs, prompt)
+            body = json.dumps({"input": job_input})
+            if len(body) > RUNPOD_REQUEST_LIMIT:
+                hint = "Configure a bucket in .env to send larger inputs." if self.s3 is None else "Reduce the workflow or its inputs."
+                return error_response(413, "The job is too large for RunPod", f"It would be {len(body) / 1e6:.1f} MB; RunPod accepts 10 MB per job. {hint}")
             async with aiohttp.ClientSession(headers=self.headers) as session:
-                async with session.post(f"{RUNPOD_API}/{endpoint_id}/run", json={"input": job_input}) as r:
+                async with session.post(f"{RUNPOD_API}/{endpoint_id}/run", data=body, headers={"Content-Type": "application/json"}) as r:
                     r.raise_for_status()
                     job_id = (await r.json())["id"]
         except (aiohttp.ClientError, botocore.exceptions.BotoCoreError, botocore.exceptions.ClientError) as e:
@@ -203,6 +225,9 @@ class CloudRun:
     async def replay(self, session, job, event):
         kind, data = event["type"], event.get("data")
         if kind == "accepted":
+            return
+        if kind == "file_chunk":
+            job.chunks.setdefault(event["id"], []).append(event["data"])
             return
         if kind == "rejected":
             # Reported by finish() as an execution_error on the first failing node, which the frontend highlights.

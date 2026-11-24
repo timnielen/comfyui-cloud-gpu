@@ -255,6 +255,9 @@ const formatBytes = (bytes) => (bytes >= 1e9 ? `${(bytes / 1e9).toFixed(2)} GB` 
 function bucketSection() {
   if (!bucket) return section("Bucket", el("div", { style: MUTED, textContent: "Checking…" }));
   if (bucket.error) return section("Bucket", el("div", { style: MUTED, textContent: bucket.error }), button("Check again", loadBucket, "textonly"));
+  if (!bucket.configured) {
+    return section("Bucket", el("div", { style: MUTED, textContent: "No bucket configured: files travel through RunPod directly, inputs up to about 7 MB per run. Add the BUCKET_* lines to .env for larger inputs." }));
+  }
   const used = bucket.inputs.bytes + bucket.outputs.bytes;
   const share = Math.min(1, used / FREE_TIER_BYTES);
   const bar = el("div", { style: "height: 6px; border-radius: 3px; background: var(--comfy-input-bg); overflow: hidden" },
