@@ -11,7 +11,7 @@ Every yield is a list of events, read through RunPod's /stream:
 "executed" events also carry "files": [{"filename", "subfolder", "type", "url"}] with presigned R2 URLs.
 The stream ends after ComfyUI's final {"type": "executing", "data": {"node": null}}.
 
-Endpoint env vars: OUT_BUCKET_ENDPOINT, OUT_BUCKET_NAME, OUT_BUCKET_KEY, OUT_BUCKET_SECRET
+Endpoint env vars: BUCKET_ENDPOINT, BUCKET_NAME, BUCKET_KEY, BUCKET_SECRET
 """
 import asyncio
 import contextlib
@@ -33,10 +33,10 @@ BATCH_SECONDS = 0.5
 PROMPT_KEYS = ("prompt", "extra_data", "partial_execution_targets")  # job input passed on to ComfyUI's /prompt
 URL_EXPIRY = 7 * 86400
 
-BUCKET = os.environ["OUT_BUCKET_NAME"]
-s3 = boto3.client("s3", endpoint_url=os.environ["OUT_BUCKET_ENDPOINT"], region_name="auto",
-                  aws_access_key_id=os.environ["OUT_BUCKET_KEY"],
-                  aws_secret_access_key=os.environ["OUT_BUCKET_SECRET"])
+BUCKET = os.environ["BUCKET_NAME"]
+s3 = boto3.client("s3", endpoint_url=os.environ["BUCKET_ENDPOINT"], region_name="auto",
+                  aws_access_key_id=os.environ["BUCKET_KEY"],
+                  aws_secret_access_key=os.environ["BUCKET_SECRET"])
 comfy = None
 
 

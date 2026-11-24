@@ -67,14 +67,13 @@ async function loadReleaseStatus() {
 async function publish() {
   const s = releaseStatus;
   const steps = [
-    s.endpoint_changes.length && `commit ${s.endpoint_changes.length} changed manifest file(s)`,
-    `push ${s.branch} to GitHub`,
+    (s.endpoint_changes.length || s.code_changes) && `commit your endpoints and ${s.branch} to the ${s.deploy_branch} branch and push it`,
     s.gh ? `create release ${s.next_release}` : `open GitHub to publish release ${s.next_release}`,
   ].filter(Boolean);
-  const other = s.other_changes.length ? `\n\n${s.other_changes.length} other uncommitted file(s) are not included.` : "";
+  const other = s.other_changes.length ? `\n\n${s.other_changes.length} uncommitted file(s) on ${s.branch} are not included.` : "";
   const ok = await app.extensionManager.dialog.confirm({
     title: "Update the cloud images",
-    message: `This will ${steps.join(", ")}. RunPod then rebuilds the endpoints from that release.${other}`,
+    message: `This will ${steps.join(", then ")}. ${s.branch} itself is not changed. RunPod then rebuilds the endpoints from that release.${other}`,
   });
   if (!ok) return;
   releasing = true;
@@ -84,7 +83,7 @@ async function publish() {
     if (result.published) toast(`Release ${result.tag} created. RunPod is rebuilding.`);
     else {
       window.open(result.url, "_blank");
-      toast(`Pushed. Publish release ${result.tag} on the GitHub page that just opened.`);
+      toast(`Pushed ${s.deploy_branch}. Publish release ${result.tag} on the GitHub page that just opened.`);
     }
   } catch (e) {
     toast(e.message, "error");
@@ -248,13 +247,14 @@ function releaseSection() {
   const s = releaseStatus;
   if (!s) return section("Cloud image", el("div", { style: MUTED, textContent: "Checking…" }));
   if (s.error) return section("Cloud image", el("div", { style: MUTED, textContent: s.error }));
-  const pending = s.endpoint_changes.length > 0 || s.commits_since_release !== 0;
+  const pending = s.endpoint_changes.length > 0 || s.code_changes || !s.released;
   const lines = [s.release ? `Latest release: ${s.release}` : "No release yet."];
-  if (s.endpoint_changes.length) lines.push(`${s.endpoint_changes.length} manifest file(s) changed, not committed yet.`);
-  if (s.commits_since_release) lines.push(`${s.commits_since_release} commit(s) since the last release.`);
-  if (!pending) lines.push("The release matches this repo.");
-  if (s.other_changes.length) lines.push(`${s.other_changes.length} other uncommitted file(s) won't be included.`);
-  const go = button(releasing ? "Working…" : `Commit, push & release ${s.next_release}`, publish);
+  if (s.endpoint_changes.length) lines.push(`${s.endpoint_changes.length} endpoint file(s) changed since the last deploy.`);
+  if (s.code_changes && s.deployed) lines.push(`${s.branch} has commits that aren't deployed yet.`);
+  if (s.deployed && !s.endpoint_changes.length && !s.code_changes && !s.released) lines.push(`The ${s.deploy_branch} branch is ahead of the latest release.`);
+  if (!pending) lines.push("The cloud images are up to date.");
+  if (s.other_changes.length) lines.push(`${s.other_changes.length} uncommitted file(s) on ${s.branch} won't be included.`);
+  const go = button(releasing ? "Working…" : `Deploy & release ${s.next_release}`, publish);
   go.disabled = releasing || !pending;
   return section("Cloud image", ...lines.map((text) => el("div", { style: MUTED, textContent: text })), go);
 }

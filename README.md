@@ -8,7 +8,7 @@ You need a [RunPod](https://www.runpod.io) account, an S3-compatible bucket such
 
 ### 1. Install the plugin
 
-Make your own copy of this repo: your cloud setup lives in it, and RunPod builds from it. Fork it, or push a clone to a new private repo. Then:
+Make your own copy of this repo on GitHub: RunPod builds from it. Fork it, or push a clone to a new private repo. Then:
 
 ```bash
 cd ComfyUI/custom_nodes
@@ -22,24 +22,28 @@ pip install -r comfy_cloud_run/requirements.txt
 2. Note the **Access Key ID**, the **Secret Access Key** and the S3 endpoint **without** the bucket name, e.g. `https://<account-id>.r2.cloudflarestorage.com`.
 3. Add lifecycle rules that delete `inputs/` after 1 day and `outputs/` after 7 days.
 
-### 3. RunPod endpoint
-
-1. **Serverless → New Endpoint → GitHub repo**, and select your copy of this repo.
-2. Branch `main`, Dockerfile path `endpoints/h3/Dockerfile`, build context `.`.
-3. Choose a GPU with enough VRAM for your models, and allow **CUDA 13.x** only.
-4. Idle timeout 1–5 s, FlashBoot on, container disk about 20 GB.
-5. Add the environment variables `OUT_BUCKET_ENDPOINT`, `OUT_BUCKET_NAME`, `OUT_BUCKET_KEY` and `OUT_BUCKET_SECRET` with your bucket's values.
-6. Create a **GitHub release** (e.g. `v0.1.0`). This starts the build.
-7. Put the endpoint ID into `endpoints/h3/manifest.json` → `"endpoint_id"` and commit it.
-
-### 4. Credentials
+### 3. Credentials
 
 In the plugin folder, copy `.env.example` to `.env` and fill it in:
 
-- `RUNPOD_API_KEY`: from RunPod → Settings → API Keys.
-- `BUCKET_*`: the same bucket values as in step 3.
+- `RUNPOD_API_KEY`: from RunPod → Settings → API Keys, with read/write access to your endpoints.
+- `BUCKET_*`: the bucket values from step 2.
 
 `.env` is not committed, and it stays on your computer.
+
+### 4. First endpoint
+
+1. Start ComfyUI, open the **Cloud** tab in the sidebar and create an endpoint with **New…**, e.g. `flux`. Add its models and node packs.
+2. Press **Deploy & release**. This creates the `cloud` branch in your repo and the first release.
+
+### 5. RunPod endpoint
+
+1. **Serverless → New Endpoint → GitHub repo**, and select your copy of this repo.
+2. Branch **`cloud`**, Dockerfile path `endpoints/<name>/Dockerfile`, build context `.`.
+3. Choose a GPU with enough VRAM for your models, and allow **CUDA 13.x** only.
+4. Idle timeout 1–5 s, FlashBoot on, container disk about 20 GB.
+5. Add the environment variables `BUCKET_ENDPOINT`, `BUCKET_NAME`, `BUCKET_KEY` and `BUCKET_SECRET`: the same lines as in your `.env`. The worker doesn't need `RUNPOD_API_KEY`, so leave that one out.
+6. Paste the endpoint's ID into the Cloud tab. If no build starts, press **Deploy & release** again.
 
 ## Running
 
@@ -59,7 +63,13 @@ Open the **Cloud** tab in the sidebar, or **Manage endpoints…** in the Cloud b
 - set the RunPod endpoint ID;
 - create new endpoints, e.g. one for Flux and one for MiniMax H3, each with its own models and GPU. For a new endpoint, create a RunPod endpoint for its Dockerfile, as in setup step 3.
 
-Changes are saved to the endpoint's folder in this repo. To update the cloud images, press **Commit, push & release** at the bottom of the tab. It commits the manifest changes, pushes, and creates the next GitHub release, which makes RunPod rebuild. Other uncommitted files in the repo are left alone.
+Changes are saved to the endpoint's folder in this repo, `endpoints/<name>/`. To update the cloud images, press **Deploy & release** at the bottom of the tab:
+1. It commits your endpoints, together with the plugin code of your current branch, to the `cloud` branch and pushes that branch.
+2. It creates the next GitHub release, which makes RunPod rebuild.
+
+Your `main` branch is never changed. `endpoints/` is ignored there, so your setup stays out of the plugin code. Uncommitted code changes aren't included.
+
+On another computer, get your endpoints from the `cloud` branch: `git fetch && git restore --source origin/cloud --worktree -- endpoints`.
 
 With the [GitHub CLI](https://cli.github.com) installed and logged in (`gh auth login`), the release is created directly. Without it, GitHub's release page opens with everything filled in, and you click **Publish release**.
 

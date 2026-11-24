@@ -1,2 +1,4 @@
 .env
 __pycache__/
+# Your endpoints are deployed to the cloud branch by the sidebar, not committed on main.
+endpoints/
