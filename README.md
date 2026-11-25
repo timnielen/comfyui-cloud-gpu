@@ -21,6 +21,8 @@ cd custom_nodes
 git clone https://github.com/timnielen/comfyui-cloud-gpu.git
 cd comfyui-cloud-gpu
 git remote rename origin upstream
+```
+```bash
 git remote add origin <your-repository-url>
 git push -u origin main
 pip install -r requirements.txt
