@@ -17,7 +17,7 @@ RunPod builds your images from a GitHub repository you own, and the plugin pushe
 2. Install the plugin and make your repository its `origin`:
 
 ```bash
-cd ComfyUI/custom_nodes
+cd custom_nodes
 git clone https://github.com/timnielen/comfy_cloud_run.git
 cd comfy_cloud_run
 git remote rename origin upstream
