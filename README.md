@@ -13,16 +13,17 @@ If you register to RunPod with the link above and deposit $10, we both **earn ad
 
 RunPod builds your images from a GitHub repository you own, and the plugin pushes your endpoints there. So the plugin needs its own copy:
 
-1. On GitHub, create an empty repository, e.g. `comfyui-cloud-gpu`. Private is fine; don't add a README.
-2. Install the plugin and make your repository its `origin`:
+1. Go to your `custom_nodes` folder and clone the repository:
 
 ```bash
-cd custom_nodes
 git clone https://github.com/timnielen/comfyui-cloud-gpu.git
+```
+2. On GitHub, create an empty repository, e.g. `comfyui-cloud-gpu`. Private is fine; don't add a README.
+3. Upload a copy of the cloned repository to your own repository:
+
+```bash
 cd comfyui-cloud-gpu
 git remote rename origin upstream
-```
-```bash
 git remote add origin <your-repository-url>
 git push -u origin main
 pip install -r requirements.txt
