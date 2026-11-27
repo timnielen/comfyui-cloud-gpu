@@ -5,11 +5,13 @@
 Edit workflows in your local ComfyUI, run them on a RunPod Serverless GPU. Progress and results show up in your local GUI, and you don't need the models locally.
 
 You need a [RunPod](https://runpod.io?ref=hhaqe53o) account and a GitHub account.
-If you register to RunPod with the link above and deposit $10, we both **earn additional 5$**.
+If you register to RunPod with the link above and deposit $10, we both earn additional 5$.
 
 ## Setup
 
 ### 1. Install the plugin
+
+[YouTube Tutorial](https://youtu.be/Jl7Z75e09Uo)
 
 RunPod builds your images from a GitHub repository you own, and the plugin pushes your endpoints there. So the plugin needs its own copy:
 
