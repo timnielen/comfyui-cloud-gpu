@@ -133,6 +133,16 @@ new MutationObserver(() => {
 window.addEventListener("cloud-run:changed", sync);
 api.addEventListener("status", updateRunning);
 
+// Endpoints that are deployed but missing here, e.g. in a fresh clone, come back from their cloud/<name> branches.
+async function restoreEndpoints() {
+  const r = await api.fetchApi("/cloud/endpoints/restore", { method: "POST" });
+  const { restored, error } = await r.json();
+  if (error) return console.warn(`Cloud Run: could not restore endpoints: ${error}`);
+  if (!restored.length) return;
+  await cloud.refresh();
+  app.extensionManager.toast.add({ severity: "info", summary: "Cloud Run", detail: `Restored ${restored.join(", ")} from the repository's cloud branches.`, life: 6000 });
+}
+
 app.registerExtension({
   name: "comfy_cloud_run.RunOnCloud",
   commands: [{ id: "CloudRun.QueuePrompt", label: "Run in the cloud", icon: "pi pi-cloud-upload", function: runOnCloud }],
@@ -140,5 +150,6 @@ app.registerExtension({
   async setup() {
     await cloud.refresh();
     await updateRunning();
+    await restoreEndpoints();
   },
 });

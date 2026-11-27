@@ -4,6 +4,8 @@ The current branch (normally main) is never changed: endpoints/ is untracked the
 endpoint's generated Dockerfile at the root and its manifest, using a temporary index, and pushes only cloud/<name>.
 """
 import asyncio
+import json
+import logging
 import os
 import re
 import shutil
@@ -90,6 +92,30 @@ async def deployed_commit(name):
     url = await run("git", "remote", "get-url", "origin")
     await run("git", "fetch", "-q", "--no-write-fetch-head", url, f"+refs/heads/{branch}:refs/cloud-run/{name}")
     return await run("git", "rev-parse", f"refs/cloud-run/{name}")
+
+
+async def restore_endpoints(names, save_manifest):
+    """Restore the manifests of origin's cloud/<name> branches that have no local endpoint folder.
+
+    endpoints/ is ignored on main, so a fresh clone has none; each deploy branch carries its endpoint's manifest.
+    """
+    restored = []
+    for line in (await run("git", "ls-remote", "origin", "refs/heads/cloud/*")).splitlines():
+        name = line.split("\t")[1].removeprefix("refs/heads/cloud/")
+        if name in names:
+            continue
+        try:
+            await deployed_commit(name)
+            text = await run("git", "show", f"refs/cloud-run/{name}:endpoints/{name}/manifest.json")
+        except GitError:  # not a deploy branch of this plugin
+            continue
+        try:
+            save_manifest(name, json.loads(text))
+        except ValueError as e:  # bad JSON, manifest or endpoint name
+            logging.warning(f"Cloud Run: could not restore endpoint {name!r} from its branch: {e}")
+            continue
+        restored.append(name)
+    return restored
 
 
 async def is_ancestor(commit, of):
@@ -202,6 +228,16 @@ def add_routes(routes, manifests):
         async with lock:
             try:
                 return web.json_response(await release(name, dockerfile))
+            except (GitError, asyncio.TimeoutError) as e:
+                return web.json_response({"error": str(e)}, status=500)
+
+    @routes.post("/cloud/endpoints/restore")
+    async def post_restore(request):
+        if lock.locked():
+            return web.json_response({"restored": []})
+        async with lock:
+            try:
+                return web.json_response({"restored": await restore_endpoints(manifests.endpoint_names(), manifests.save_manifest)})
             except (GitError, asyncio.TimeoutError) as e:
                 return web.json_response({"error": str(e)}, status=500)
 

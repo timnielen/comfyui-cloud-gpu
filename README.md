@@ -77,7 +77,7 @@ Changes are saved to the endpoint's folder in this repo, `endpoints/<name>/`. To
 
 Your `main` branch is never changed. `endpoints/` is ignored there, so your setup stays out of the plugin code. Uncommitted code changes aren't included.
 
-On another computer, get an endpoint back from its branch: `git fetch && git restore --source origin/cloud/<name> --worktree -- endpoints/<name>`.
+In a fresh clone, e.g. on another computer, the endpoints come back by themselves: when the GUI loads, every `cloud/<name>` branch on `origin` without a local endpoint is restored, with the manifest as of its last deploy. To delete an endpoint for good, delete its folder and its branch.
 
 With the [GitHub CLI](https://cli.github.com) installed and logged in (`gh auth login`), the release is created directly. Without it, GitHub's release page opens with everything filled in, and you click **Publish release**.
 
