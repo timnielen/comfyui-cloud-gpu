@@ -1,7 +1,9 @@
 """Cloud Run: run prompts from the local GUI on a RunPod Serverless endpoint. The cloud worker itself lives in worker/."""
 import asyncio
 import json
+import logging
 import os
+import sys
 
 from aiohttp import web
 
@@ -84,6 +86,23 @@ async def post_cloud_prompt(request):
     if cloud is None:
         return error_response(503, "Cloud Run is not configured", f"Set {', '.join(missing)} in {ENV_FILE}")
     return await cloud.post_prompt(request)
+
+
+def restart_process():
+    """Replace this process with a fresh ComfyUI with the same command line, as ComfyUI-Manager does."""
+    logging.info("Cloud Run: restarting ComfyUI")
+    if sys.platform == "win32":  # Windows execv doesn't quote the arguments
+        os.execv(sys.executable, [f'"{sys.executable}"', f'"{sys.argv[0]}"', *sys.argv[1:]])
+    os.execv(sys.executable, [sys.executable, *sys.argv])
+
+
+@server.routes.post("/cloud/restart")
+async def restart(request):
+    # Running and queued prompts, local and cloud (cloud jobs sit in currently_running), would be lost.
+    if server.prompt_queue.get_tasks_remaining():
+        return error_response(409, "Prompts are running or queued", "Restart ComfyUI once the queue is empty.")
+    asyncio.get_running_loop().call_later(0.5, restart_process)  # after the response is sent
+    return web.json_response({})
 
 
 @server.routes.get("/cloud/jobs")

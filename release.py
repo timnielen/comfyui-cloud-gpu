@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import shutil
+import subprocess
 import tempfile
 import urllib.parse
 
@@ -17,6 +18,8 @@ from aiohttp import web
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 GITHUB_REMOTE = re.compile(r"(?:git@github\.com:|https://github\.com/)([^/]+/[^/]+?)(?:\.git)?/?")
 lock = asyncio.Lock()
+# The plugin commit this process loaded. Once HEAD differs, e.g. after Update plugin, a restart applies the new code.
+LOADED_HEAD = subprocess.run(["git", "rev-parse", "HEAD"], cwd=PLUGIN_DIR, capture_output=True, text=True).stdout.strip()
 
 
 class GitError(Exception):
@@ -166,6 +169,7 @@ async def state(name, dockerfile):
         "head": head, "tree": tree, "deployed": deployed,
         "branch": branch,
         "upstream_update": await upstream_update(branch, head),
+        "restart_needed": head != LOADED_HEAD,
         "deploy_branch": deploy_branch(name),
         "image_changed": image_changed,
         "worker_changed": worker_changed,

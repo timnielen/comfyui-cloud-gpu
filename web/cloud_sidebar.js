@@ -114,19 +114,41 @@ async function updatePlugin() {
   const s = releaseStatus;
   const ok = await app.extensionManager.dialog.confirm({
     title: "Update the plugin",
-    message: `This will pull the plugin update from upstream into ${s.branch} and push ${s.branch} to ${repoName(s.origin)}. Nothing is deployed. Restart ComfyUI afterwards: the Cloud tab then shows for each endpoint whether the update changes its image.`,
+    message: `This will pull the plugin update from upstream into ${s.branch}, push ${s.branch} to ${repoName(s.origin)} and restart ComfyUI. Nothing is deployed: after the restart, the Cloud tab shows for each endpoint whether the update changes its image.`,
   });
   if (!ok) return;
   releasing = true;
   render();
   try {
     await request("/cloud/update", "POST");
-    toast("Plugin updated. Restart ComfyUI to use it.");
   } catch (e) {
     toast(e.message, "error");
+    releasing = false;
+    return loadReleaseStatus();
   }
   releasing = false;
   await loadReleaseStatus();
+  await restartComfy();
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Restarts the server, waits until the new one answers, and reloads the page so the new plugin code runs on both sides.
+async function restartComfy() {
+  try {
+    await request("/cloud/restart", "POST");
+  } catch (e) {
+    return toast(e.message, "error");
+  }
+  toast("Restarting ComfyUI…");
+  await sleep(2000);  // the old server exits half a second after answering
+  for (let i = 0; i < 300; i++) {
+    try {
+      if ((await fetch(api.apiURL("/system_stats"))).ok) return location.reload();
+    } catch {}  // not up yet
+    await sleep(1000);
+  }
+  toast("ComfyUI didn't come back after 5 minutes. Check its console.", "error");
 }
 
 async function restoreRelease() {
@@ -357,6 +379,9 @@ function releaseSection() {
     const restore = button(`Discard changes, back to ${s.release}`, restoreRelease, "textonly");
     restore.disabled = releasing;
     children.push(restore);
+  }
+  if (s.restart_needed) {
+    children.push(el("div", { style: MUTED, textContent: "The plugin code changed. Restart ComfyUI to apply it." }), button("Restart ComfyUI", restartComfy));
   }
   if (s.upstream_update) {
     const update = button(releasing ? "Working…" : "Update plugin", updatePlugin);

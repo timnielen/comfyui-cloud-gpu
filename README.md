@@ -28,7 +28,7 @@ git push -u origin main
 pip install -r requirements.txt
 ```
 
-To get plugin updates later, press **Update plugin** in the Cloud tab when it shows one, then restart ComfyUI. It pulls from `upstream` and pushes to your repository, but doesn't deploy: most updates only change the GUI and the local side. If an update changes what runs in the cloud, the Cloud tab says so for each endpoint, and you deploy as usual. By hand: `git pull upstream main`, then `git push`. A public fork works too: clone your fork instead and skip the remote commands.
+To get plugin updates later, press **Update plugin** in the Cloud tab when it shows one. It pulls from `upstream`, pushes to your repository and restarts ComfyUI, but doesn't deploy: most updates only change the GUI and the local side. If an update changes what runs in the cloud, the Cloud tab says so for each endpoint, and you deploy as usual. By hand: `git pull upstream main`, then `git push`; the Cloud tab then offers **Restart ComfyUI**. A restart waits until no prompts are running or queued. A public fork works too: clone your fork instead and skip the remote commands.
 
 ### 2. Credentials
 

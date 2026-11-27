@@ -140,6 +140,8 @@ Git runs with `GIT_TERMINAL_PROMPT=0`, so missing credentials fail instead of ha
 
 The status also reports `upstream_update`: an `upstream` remote exists and its tip of the current branch (via `ls-remote`) isn't in HEAD. `POST /cloud/update` then runs `git pull --ff-only upstream <branch>` and `git push origin <branch>`, nothing else. A diverged branch fails the fast-forward and asks for a manual pull. After a restart, each endpoint's status shows whether the update changed its Dockerfile or `worker/`.
 
+`restart_needed` is set when HEAD differs from the commit the running process loaded (`release.LOADED_HEAD`). `POST /cloud/restart` refuses while `prompt_queue.get_tasks_remaining()` is non-zero (cloud jobs count, they sit in `currently_running`), otherwise replaces the process with `os.execv` half a second after answering, as ComfyUI-Manager does. The sidebar then polls `/system_stats` and reloads the page. **Update plugin** pulls, pushes and restarts in one go.
+
 `POST /cloud/endpoints/restore`, called by the frontend on every page load, lists origin's `cloud/*` branches with `ls-remote` and recreates each missing endpoint from `endpoints/<name>/manifest.json` on its branch (fetched into `refs/cloud-run/<name>`, saved with `save_manifest`). Branches without that file are skipped silently.
 
 `POST /cloud/release/restore?endpoint=<name>` fetches the latest release tag into `refs/cloud-run-release/<name>` and saves its `endpoints/<name>/manifest.json`, keeping the local `endpoint_id` and `comfy_args`: they aren't part of the image and only reach the branch with a deploy.
