@@ -24,7 +24,6 @@ RUNPOD_API = "https://api.runpod.ai/v2"
 POLL_SECONDS = 1.0
 URL_EXPIRY = 86400
 TERMINAL = {"COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"}
-RUNPOD_REQUEST_LIMIT = 10 * 1000 * 1000  # bytes RunPod accepts per /run request
 BUCKET_PREFIXES = ("inputs/", "outputs/")  # everything this plugin and its worker write to the bucket
 END_EVENTS = {"execution_success", "execution_error", "execution_interrupted"}
 HISTORY_EVENTS = {"execution_start", "execution_cached"} | END_EVENTS
@@ -188,19 +187,22 @@ class CloudRun:
         if runtime["models"] or runtime["custom_nodes"]:
             job_input["runtime"] = runtime
 
+        size = ""  # filled in once the request is built, for the error messages
         try:
             job_input["inputs"] = await asyncio.to_thread(self.job_inputs, prompt)
+            # No local size limit: RunPod decides what it accepts (10 MB per job at the time of writing).
             body = json.dumps({"input": job_input})
-            if len(body) > RUNPOD_REQUEST_LIMIT:
-                hint = "Configure a bucket in .env to send larger inputs." if self.s3 is None else "Reduce the workflow or its inputs."
-                return error_response(413, "The job is too large for RunPod", f"It would be {len(body) / 1e6:.1f} MB; RunPod accepts 10 MB per job. {hint}")
+            size = f" The request was {len(body) / 1e6:.1f} MB."
             async with aiohttp.ClientSession(headers=self.headers) as session:
                 async with session.post(f"{RUNPOD_API}/{endpoint_id}/run", data=body, headers={"Content-Type": "application/json"}) as r:
+                    if r.status == 413:
+                        hint = "Configure a bucket in .env to send larger inputs." if self.s3 is None else "Reduce the workflow or its inputs."
+                        return error_response(413, "RunPod refused the job as too large", f"{size.strip()} {hint}")
                     r.raise_for_status()
                     job_id = (await r.json())["id"]
         except (aiohttp.ClientError, botocore.exceptions.BotoCoreError, botocore.exceptions.ClientError) as e:
             logging.warning(f"Cloud Run: could not submit prompt: {e}")
-            return error_response(502, "Could not submit the cloud job", str(e))
+            return error_response(502, "Could not submit the cloud job", f"{e}{size}")
 
         logging.info(f"Cloud Run: prompt {prompt_id} is RunPod job {job_id} on endpoint {name}")
         workflow_metadata = valid_workflow_metadata(json_data) or workflow_metadata_from_prompt(extra_data) or {}

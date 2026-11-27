@@ -46,7 +46,7 @@ The handler is an async generator, and every yield is a list of events, read thr
 ### Bucket optional
 
 The bucket is optional on each side, and each side decides independently:
-- **Local `.env` without `BUCKET_*`:** inputs go inline as base64. `post_prompt` refuses (413) a job whose request body would exceed RunPod's 10 MB `/run` limit, before submitting.
+- **Local `.env` without `BUCKET_*`:** inputs go inline as base64. There's no local size limit, so a change of RunPod's `/run` limit (10 MB at the time of writing) needs no plugin update. If RunPod answers 413, `post_prompt` reports it with the request size and suggests a bucket; other submit errors also include the size.
 - **Endpoint without `BUCKET_*`:** outputs are streamed as `file_chunk` items. The local side collects them per job (`CloudJob.chunks`) and writes the file when the `executed` event arrives.
 - **Half a bucket configuration** is an error on both sides.
 

@@ -113,7 +113,7 @@ Developers: see [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## Bucket (optional)
 
-You don't need a bucket to get started. Without one, your input files travel inside the job request, and the worker streams its outputs back in pieces. RunPod accepts 10 MB per job request, so that's about 7 MB of input files per run. That's enough for reference images, short audio and typical video outputs.
+You don't need a bucket to get started. Without one, your input files travel inside the job request, and the worker streams its outputs back in pieces. RunPod currently accepts 10 MB per job request, so that's about 7 MB of input files per run. If a job is too large, you get an error suggesting a bucket. That's enough for reference images, short audio and typical video outputs.
 
 A bucket is worth it when:
 - **your inputs are larger,** e.g. reference videos. With a bucket, inputs and outputs go through storage instead of RunPod's API, and unchanged inputs are uploaded only once;
