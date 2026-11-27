@@ -128,6 +128,23 @@ async function updatePlugin() {
   await loadReleaseStatus();
 }
 
+async function restoreRelease() {
+  const s = releaseStatus;
+  const ok = await app.extensionManager.dialog.confirm({
+    title: `Restore ${cloud.selected}`,
+    message: `This discards the changes to ${cloud.selected}'s models, node packs, pip packages and ComfyUI version since release ${s.release}. The endpoint ID and ComfyUI options are kept.`,
+  });
+  if (!ok) return;
+  try {
+    const { tag } = await request(`/cloud/release/restore?endpoint=${encodeURIComponent(cloud.selected)}`, "POST");
+    toast(`Restored ${cloud.selected} to ${tag}.`);
+  } catch (e) {
+    return toast(e.message, "error");
+  }
+  await cloud.refresh();
+  await Promise.all([checkWorkflow(), loadReleaseStatus()]);
+}
+
 function workflowContents() {
   const graph = app.rootGraph ?? app.graph;
   const graphs = [graph, ...(graph.subgraphs?.values() ?? [])];
@@ -335,6 +352,11 @@ function releaseSection() {
   const go = button(releasing ? "Working…" : `Deploy & release ${s.next_release}`, publish);
   go.disabled = releasing || !pending;
   const children = [...lines.map((text) => el("div", { style: MUTED, textContent: text })), go];
+  if (s.release && s.image_changed) {
+    const restore = button(`Discard changes, back to ${s.release}`, restoreRelease, "textonly");
+    restore.disabled = releasing;
+    children.push(restore);
+  }
   if (s.upstream_update) {
     const update = button(releasing ? "Working…" : `Update plugin & release ${s.next_release}`, updatePlugin);
     update.disabled = releasing;

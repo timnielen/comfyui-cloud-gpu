@@ -75,6 +75,8 @@ Changes are saved to the endpoint's folder in this repo, `endpoints/<name>/`. To
 1. It commits the endpoint's Dockerfile and manifest, together with the plugin code of your current branch, to the branch `cloud/<name>`, and pushes that branch.
 2. It creates the endpoint's next GitHub release, e.g. `flux-v0.1.3`, which makes RunPod rebuild.
 
+To undo changes you haven't deployed yet, press **Discard changes, back to `<release>`**. It resets the models, node packs, pip packages and ComfyUI version to the latest release and keeps the endpoint ID and ComfyUI options.
+
 Your `main` branch is never changed. `endpoints/` is ignored there, so your setup stays out of the plugin code. Uncommitted code changes aren't included.
 
 In a fresh clone, e.g. on another computer, the endpoints come back by themselves: when the GUI loads, every `cloud/<name>` branch on `origin` without a local endpoint is restored, with the manifest as of its last deploy. To delete an endpoint for good, delete its folder and its branch.

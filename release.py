@@ -118,6 +118,16 @@ async def restore_endpoints(names, save_manifest):
     return restored
 
 
+async def released_manifest(name):
+    """(tag, manifest) of the endpoint's latest release, fetched from origin into refs/cloud-run-release/<name>."""
+    tag, _ = await latest_release(name)
+    if tag is None:
+        raise GitError(f"{name} has no release yet")
+    url = await run("git", "remote", "get-url", "origin")
+    await run("git", "fetch", "-q", "--no-write-fetch-head", url, f"+refs/tags/{tag}:refs/cloud-run-release/{name}")
+    return tag, json.loads(await run("git", "show", f"refs/cloud-run-release/{name}:endpoints/{name}/manifest.json"))
+
+
 async def is_ancestor(commit, of):
     try:
         await run("git", "merge-base", "--is-ancestor", commit, of)
@@ -240,6 +250,20 @@ def add_routes(routes, manifests):
                 return web.json_response({"restored": await restore_endpoints(manifests.endpoint_names(), manifests.save_manifest)})
             except (GitError, asyncio.TimeoutError) as e:
                 return web.json_response({"error": str(e)}, status=500)
+
+    @routes.post("/cloud/release/restore")
+    async def post_restore_release(request):
+        """Discard the endpoint's image changes since its latest release. The endpoint ID and ComfyUI options aren't part of
+        the image (and only reach the branch with a deploy), so the local ones are kept."""
+        name, _ = endpoint(request)
+        async with lock:
+            try:
+                tag, released = await released_manifest(name)
+            except (GitError, asyncio.TimeoutError) as e:
+                return web.json_response({"error": str(e)}, status=500)
+        current = manifests.load_manifest(name)
+        manifests.save_manifest(name, {**released, "endpoint_id": current["endpoint_id"], "comfy_args": current.get("comfy_args", "")})
+        return web.json_response({"tag": tag})
 
     @routes.post("/cloud/update")
     async def post_update(request):
