@@ -7,6 +7,8 @@ import asyncio
 import os
 import re
 import shutil
+import subprocess
+import sys
 import tempfile
 import urllib.parse
 
@@ -98,8 +100,21 @@ async def is_ancestor(commit, of):
         return False
 
 
+async def upstream_update(branch, head):
+    """Whether the upstream remote (the plugin's original repo, see the README) has commits for `branch` that HEAD lacks."""
+    if "upstream" not in (await run("git", "remote")).splitlines():
+        return False
+    try:
+        line = await run("git", "ls-remote", "upstream", f"refs/heads/{branch}")
+    except (GitError, asyncio.TimeoutError):  # offline, or no such branch upstream: nothing to offer
+        return False
+    # An upstream commit not fetched yet isn't an ancestor either.
+    return bool(line) and line.split("\t")[0] != head and not await is_ancestor(line.split("\t")[0], head)
+
+
 async def state(name, dockerfile):
     head = await run("git", "rev-parse", "HEAD")
+    branch = await run("git", "rev-parse", "--abbrev-ref", "HEAD")
     tree = await deploy_tree(name, dockerfile)
     deployed = await deployed_commit(name)
     # Only the Dockerfile and the plugin code shape the image. The manifest copy on the branch is just for restoring an
@@ -113,7 +128,8 @@ async def state(name, dockerfile):
     other = [line[3:] for line in (await run("git", "status", "--porcelain", "--untracked-files=all")).splitlines()]
     return {
         "head": head, "tree": tree, "deployed": deployed,
-        "branch": await run("git", "rev-parse", "--abbrev-ref", "HEAD"),
+        "branch": branch,
+        "upstream_update": await upstream_update(branch, head),
         "deploy_branch": deploy_branch(name),
         "image_changed": image_changed,
         "code_changes": code_changes,
@@ -147,6 +163,21 @@ async def release(name, dockerfile):
     return {"tag": tag, "published": False, "url": url}
 
 
+async def update(name):
+    """Fast-forward the current branch from upstream, push it to origin, then deploy and release the endpoint."""
+    branch = await run("git", "rev-parse", "--abbrev-ref", "HEAD")
+    try:
+        await run("git", "pull", "-q", "--ff-only", "upstream", branch)
+    except GitError as e:
+        raise GitError(f"{str(e).splitlines()[-1]} Pull by hand: git pull upstream {branch}") from None
+    await run("git", "push", "-q", "origin", branch)
+    # The pulled code may generate a different Dockerfile than the one this (not yet restarted) process would.
+    await asyncio.to_thread(subprocess.run, [sys.executable, os.path.join(PLUGIN_DIR, "tools", "gen_dockerfile.py"), name],
+                            cwd=PLUGIN_DIR, check=True, capture_output=True)
+    with open(os.path.join(PLUGIN_DIR, "endpoints", name, "Dockerfile"), encoding="utf-8") as f:
+        return await release(name, f.read())
+
+
 def add_routes(routes, manifests):
     """`manifests` is the plugin's manifest module, passed in so this file imports without the plugin package (tests)."""
     def endpoint(request):
@@ -173,3 +204,16 @@ def add_routes(routes, manifests):
                 return web.json_response(await release(name, dockerfile))
             except (GitError, asyncio.TimeoutError) as e:
                 return web.json_response({"error": str(e)}, status=500)
+
+    @routes.post("/cloud/update")
+    async def post_update(request):
+        name, _ = endpoint(request)
+        if lock.locked():
+            return web.json_response({"error": "A release is already in progress"}, status=409)
+        async with lock:
+            try:
+                return web.json_response(await update(name))
+            except (GitError, asyncio.TimeoutError) as e:
+                return web.json_response({"error": str(e)}, status=500)
+            except subprocess.CalledProcessError as e:
+                return web.json_response({"error": f"Pulled the update, but generating the Dockerfile failed: {e.stderr.decode(errors='replace').strip()}"}, status=500)

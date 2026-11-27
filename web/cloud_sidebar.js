@@ -105,6 +105,29 @@ async function publish() {
   await loadReleaseStatus();
 }
 
+async function updatePlugin() {
+  const s = releaseStatus;
+  const ok = await app.extensionManager.dialog.confirm({
+    title: "Update the plugin",
+    message: `This will pull the plugin update from upstream into ${s.branch}, push ${s.branch} to ${repoName(s.origin)}, then deploy ${cloud.selected} and release ${s.next_release}. Restart ComfyUI afterwards to use the update locally. Other endpoints get it on their next deploy.`,
+  });
+  if (!ok) return;
+  releasing = true;
+  render();
+  try {
+    const result = await request(`/cloud/update?endpoint=${encodeURIComponent(cloud.selected)}`, "POST");
+    if (result.published) toast(`Updated. Release ${result.tag} created, RunPod is rebuilding. Restart ComfyUI to use the update locally.`);
+    else {
+      window.open(result.url, "_blank");
+      toast(`Updated and pushed ${s.deploy_branch}. Publish release ${result.tag} on the GitHub page that just opened, and restart ComfyUI.`);
+    }
+  } catch (e) {
+    toast(e.message, "error");
+  }
+  releasing = false;
+  await loadReleaseStatus();
+}
+
 function workflowContents() {
   const graph = app.rootGraph ?? app.graph;
   const graphs = [graph, ...(graph.subgraphs?.values() ?? [])];
@@ -281,7 +304,13 @@ function releaseSection() {
   if (s.other_changes.length) lines.push(`${s.other_changes.length} uncommitted file(s) on ${s.branch} won't be included.`);
   const go = button(releasing ? "Working…" : `Deploy & release ${s.next_release}`, publish);
   go.disabled = releasing || !pending;
-  return section("Cloud image", ...lines.map((text) => el("div", { style: MUTED, textContent: text })), go);
+  const children = [...lines.map((text) => el("div", { style: MUTED, textContent: text })), go];
+  if (s.upstream_update) {
+    const update = button(releasing ? "Working…" : `Update plugin & release ${s.next_release}`, updatePlugin);
+    update.disabled = releasing;
+    children.push(el("div", { style: MUTED, textContent: "A plugin update is available upstream." }), update);
+  }
+  return section("Cloud image", ...children);
 }
 
 function render() {

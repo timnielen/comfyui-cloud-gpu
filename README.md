@@ -28,7 +28,7 @@ git push -u origin main
 pip install -r requirements.txt
 ```
 
-To get plugin updates later: `git pull upstream main`, then `git push`. A public fork works too: clone your fork instead and skip the remote commands.
+To get plugin updates later, press **Update plugin** in the Cloud tab when it shows one, then restart ComfyUI. It pulls from `upstream`, pushes to your repository and releases the selected endpoint. By hand: `git pull upstream main`, then `git push`. A public fork works too: clone your fork instead and skip the remote commands.
 
 ### 2. Credentials
 
