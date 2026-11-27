@@ -145,6 +145,7 @@ The status also reports `upstream_update`: an `upstream` remote exists and its t
 `POST /cloud/endpoints/restore`, called by the frontend on every page load, lists origin's `cloud/*` branches with `ls-remote` and recreates each missing endpoint from `endpoints/<name>/manifest.json` on its branch (fetched into `refs/cloud-run/<name>`, saved with `save_manifest`). Branches without that file are skipped silently.
 
 `POST /cloud/release/restore?endpoint=<name>` fetches the latest release tag into `refs/cloud-run-release/<name>` and saves its `endpoints/<name>/manifest.json`, keeping the local `endpoint_id` and `comfy_args`: they aren't part of the image and only reach the branch with a deploy.
+The sidebar offers it when the status's `manifest_changed` is set: the local manifest differs from the release's, ignoring those two fields. It isn't derived from `image_changed`, because a plugin update can change the generated Dockerfile of an unchanged manifest. A release of the deployed branch tip reuses `refs/cloud-run/<name>`, so the check costs no extra fetch in the usual case.
 
 Open question: RunPod's docs don't say whether a release builds each endpoint's configured branch, or the commit the release points to. If it's the latter, a release for one endpoint would make the other endpoints build that endpoint's Dockerfile. Check this once with two endpoints on RunPod.
 

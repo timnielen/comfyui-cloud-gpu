@@ -119,14 +119,23 @@ async def restore_endpoints(names, save_manifest):
     return restored
 
 
-async def released_manifest(name):
-    """(tag, manifest) of the endpoint's latest release, fetched from origin into refs/cloud-run-release/<name>."""
-    tag, _ = await latest_release(name)
-    if tag is None:
-        raise GitError(f"{name} has no release yet")
-    url = await run("git", "remote", "get-url", "origin")
-    await run("git", "fetch", "-q", "--no-write-fetch-head", url, f"+refs/tags/{tag}:refs/cloud-run-release/{name}")
-    return tag, json.loads(await run("git", "show", f"refs/cloud-run-release/{name}:endpoints/{name}/manifest.json"))
+# Manifest fields that aren't part of the image: they're kept when restoring a release and ignored when comparing with one.
+LOCAL_FIELDS = ("endpoint_id", "comfy_args")
+
+
+def image_fields(manifest):
+    return {k: v for k, v in manifest.items() if k not in LOCAL_FIELDS}
+
+
+async def released_manifest(name, tag, tag_commit, deployed):
+    """The manifest of release `tag`. A release of the deployed branch tip, the usual case, is already fetched by
+    deployed_commit; an older one is fetched into refs/cloud-run-release/<name>."""
+    ref = f"refs/cloud-run/{name}"
+    if tag_commit != deployed:
+        ref = f"refs/cloud-run-release/{name}"
+        url = await run("git", "remote", "get-url", "origin")
+        await run("git", "fetch", "-q", "--no-write-fetch-head", url, f"+refs/tags/{tag}:{ref}")
+    return json.loads(await run("git", "show", f"{ref}:endpoints/{name}/manifest.json"))
 
 
 async def is_ancestor(commit, of):
@@ -164,6 +173,16 @@ async def state(name, dockerfile):
         image_changed = worker_changed = True
         head_deployed = False
     tag, tag_commit = await latest_release(name)
+    # Compared with the release, not via the Dockerfile: a plugin update can change the Dockerfile of an unchanged manifest.
+    manifest_changed = False
+    if tag:
+        try:
+            released = await released_manifest(name, tag, tag_commit, deployed)
+        except (GitError, ValueError):  # a release without a readable manifest copy can't be restored either
+            pass
+        else:
+            with open(os.path.join(PLUGIN_DIR, "endpoints", name, "manifest.json"), encoding="utf-8") as f:
+                manifest_changed = image_fields(json.load(f)) != image_fields(released)
     other = [line[3:] for line in (await run("git", "status", "--porcelain", "--untracked-files=all")).splitlines()]
     return {
         "head": head, "tree": tree, "deployed": deployed,
@@ -172,6 +191,7 @@ async def state(name, dockerfile):
         "restart_needed": head != LOADED_HEAD,
         "deploy_branch": deploy_branch(name),
         "image_changed": image_changed,
+        "manifest_changed": manifest_changed,
         "worker_changed": worker_changed,
         "head_deployed": head_deployed,
         "released": deployed is not None and tag_commit == deployed,
@@ -258,11 +278,14 @@ def add_routes(routes, manifests):
         name, _ = endpoint(request)
         async with lock:
             try:
-                tag, released = await released_manifest(name)
+                tag, tag_commit = await latest_release(name)
+                if tag is None:
+                    raise GitError(f"{name} has no release yet")
+                released = await released_manifest(name, tag, tag_commit, await deployed_commit(name))
             except (GitError, asyncio.TimeoutError) as e:
                 return web.json_response({"error": str(e)}, status=500)
         current = manifests.load_manifest(name)
-        manifests.save_manifest(name, {**released, "endpoint_id": current["endpoint_id"], "comfy_args": current.get("comfy_args", "")})
+        manifests.save_manifest(name, {**released, **{k: current.get(k, "") for k in LOCAL_FIELDS}})
         return web.json_response({"tag": tag})
 
     @routes.post("/cloud/update")

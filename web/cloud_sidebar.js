@@ -367,7 +367,8 @@ function releaseSection() {
   if (s.error) return section("Cloud image", el("div", { style: MUTED, textContent: s.error }));
   const pending = s.image_changed || s.worker_changed || !s.released;
   const lines = [`Repository: ${repoName(s.origin)}`, s.release ? `Latest release: ${s.release}` : "No release yet."];
-  if (s.deployed && s.image_changed) lines.push("Models, node packs or the ComfyUI version changed since the last deploy.");
+  if (s.manifest_changed) lines.push(`Models, node packs, pip packages or the ComfyUI version changed since ${s.release}.`);
+  else if (s.deployed && s.image_changed) lines.push("A plugin update changes how the image is built.");
   if (s.worker_changed && s.deployed) lines.push(`The worker code on ${s.branch} changed since the last deploy.`);
   if (s.deployed && !s.image_changed && !s.worker_changed && !s.released) lines.push(`The ${s.deploy_branch} branch is ahead of the latest release.`);
   if (!pending) lines.push("The image is up to date.");
@@ -375,7 +376,7 @@ function releaseSection() {
   const go = button(releasing ? "Working…" : `Deploy & release ${s.next_release}`, publish);
   go.disabled = releasing || !pending;
   const children = [...lines.map((text) => el("div", { style: MUTED, textContent: text })), go];
-  if (s.release && s.image_changed) {
+  if (s.manifest_changed) {
     const restore = button(`Discard changes, back to ${s.release}`, restoreRelease, "textonly");
     restore.disabled = releasing;
     children.push(restore);
