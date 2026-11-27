@@ -80,7 +80,7 @@ const repoName = (origin) => origin.match(/github\.com[:/](.+?)(\.git)?\/?$/)?.[
 async function publish() {
   const s = releaseStatus;
   const steps = [
-    (s.image_changed || s.code_changes) && `commit ${cloud.selected}'s Dockerfile and ${s.branch} to the ${s.deploy_branch} branch and push it to ${repoName(s.origin)}`,
+    (s.image_changed || s.worker_changed) && `commit ${cloud.selected}'s Dockerfile and ${s.branch} to the ${s.deploy_branch} branch and push it to ${repoName(s.origin)}`,
     s.gh ? `create release ${s.next_release}` : `open GitHub to publish release ${s.next_release}`,
   ].filter(Boolean);
   const other = s.other_changes.length ? `\n\n${s.other_changes.length} uncommitted file(s) on ${s.branch} are not included.` : "";
@@ -109,18 +109,14 @@ async function updatePlugin() {
   const s = releaseStatus;
   const ok = await app.extensionManager.dialog.confirm({
     title: "Update the plugin",
-    message: `This will pull the plugin update from upstream into ${s.branch}, push ${s.branch} to ${repoName(s.origin)}, then deploy ${cloud.selected} and release ${s.next_release}. Restart ComfyUI afterwards to use the update locally. Other endpoints get it on their next deploy.`,
+    message: `This will pull the plugin update from upstream into ${s.branch} and push ${s.branch} to ${repoName(s.origin)}. Nothing is deployed. Restart ComfyUI afterwards: the Cloud tab then shows for each endpoint whether the update changes its image.`,
   });
   if (!ok) return;
   releasing = true;
   render();
   try {
-    const result = await request(`/cloud/update?endpoint=${encodeURIComponent(cloud.selected)}`, "POST");
-    if (result.published) toast(`Updated. Release ${result.tag} created, RunPod is rebuilding. Restart ComfyUI to use the update locally.`);
-    else {
-      window.open(result.url, "_blank");
-      toast(`Updated and pushed ${s.deploy_branch}. Publish release ${result.tag} on the GitHub page that just opened, and restart ComfyUI.`);
-    }
+    await request("/cloud/update", "POST");
+    toast("Plugin updated. Restart ComfyUI to use it.");
   } catch (e) {
     toast(e.message, "error");
   }
@@ -342,11 +338,11 @@ function releaseSection() {
   const s = releaseStatus;
   if (!s) return section("Cloud image", el("div", { style: MUTED, textContent: "Checking…" }));
   if (s.error) return section("Cloud image", el("div", { style: MUTED, textContent: s.error }));
-  const pending = s.image_changed || s.code_changes || !s.released;
+  const pending = s.image_changed || s.worker_changed || !s.released;
   const lines = [`Repository: ${repoName(s.origin)}`, s.release ? `Latest release: ${s.release}` : "No release yet."];
   if (s.deployed && s.image_changed) lines.push("Models, node packs or the ComfyUI version changed since the last deploy.");
-  if (s.code_changes && s.deployed) lines.push(`${s.branch} has commits that aren't deployed yet.`);
-  if (s.deployed && !s.image_changed && !s.code_changes && !s.released) lines.push(`The ${s.deploy_branch} branch is ahead of the latest release.`);
+  if (s.worker_changed && s.deployed) lines.push(`The worker code on ${s.branch} changed since the last deploy.`);
+  if (s.deployed && !s.image_changed && !s.worker_changed && !s.released) lines.push(`The ${s.deploy_branch} branch is ahead of the latest release.`);
   if (!pending) lines.push("The image is up to date.");
   if (s.other_changes.length) lines.push(`${s.other_changes.length} uncommitted file(s) on ${s.branch} won't be included.`);
   const go = button(releasing ? "Working…" : `Deploy & release ${s.next_release}`, publish);
@@ -358,7 +354,7 @@ function releaseSection() {
     children.push(restore);
   }
   if (s.upstream_update) {
-    const update = button(releasing ? "Working…" : `Update plugin & release ${s.next_release}`, updatePlugin);
+    const update = button(releasing ? "Working…" : "Update plugin", updatePlugin);
     update.disabled = releasing;
     children.push(el("div", { style: MUTED, textContent: "A plugin update is available upstream." }), update);
   }

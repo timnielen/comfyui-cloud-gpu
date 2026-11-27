@@ -36,10 +36,11 @@ COPY worker/requirements.txt /tmp/worker-requirements.txt
 RUN pip install -r /tmp/worker-requirements.txt
 """
 
+# Only worker/ goes into the image, so the rest of the plugin (GUI, local backend) never needs a rebuild.
 FOOTER = """\
-# Plugin code last: editing it only rebuilds this layer.
-COPY . /comfyui/custom_nodes/comfy_cloud_run
-CMD ["python", "custom_nodes/comfy_cloud_run/worker/handler.py"]
+# Worker code last: editing it only rebuilds this layer.
+COPY worker /worker
+CMD ["python", "/worker/handler.py"]
 """
 
 

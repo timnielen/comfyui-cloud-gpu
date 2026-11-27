@@ -19,9 +19,9 @@ MANIFEST = {
 def test_layer_order():
     text = dockerfile(MANIFEST)
     order = [text.index(s) for s in ("curl -fsSL", "pip install torch", "fetch -q --depth 1 https://github.com/Comfy-Org/ComfyUI c0ffee",
-                                      "pip install -r requirements.txt", "custom_nodes/NodePack", "COPY . /comfyui/custom_nodes/comfy_cloud_run")]
+                                      "pip install -r requirements.txt", "custom_nodes/NodePack", "COPY worker /worker")]
     assert order == sorted(order)
-    assert text.rstrip().endswith('CMD ["python", "custom_nodes/comfy_cloud_run/worker/handler.py"]')
+    assert text.rstrip().endswith('CMD ["python", "/worker/handler.py"]')
 
 
 def test_quoting_and_pinning():

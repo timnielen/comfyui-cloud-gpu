@@ -9,8 +9,6 @@ import logging
 import os
 import re
 import shutil
-import subprocess
-import sys
 import tempfile
 import urllib.parse
 
@@ -153,13 +151,15 @@ async def state(name, dockerfile):
     branch = await run("git", "rev-parse", "--abbrev-ref", "HEAD")
     tree = await deploy_tree(name, dockerfile)
     deployed = await deployed_commit(name)
-    # Only the Dockerfile and the plugin code shape the image. The manifest copy on the branch is just for restoring an
-    # endpoint elsewhere, so manifest-only edits (e.g. the endpoint ID) wait for the next real deploy.
+    # Only the Dockerfile and worker/ shape the image. The rest of the plugin runs locally, and the manifest copy on the
+    # branch is just for restoring an endpoint elsewhere, so changes to them wait for the next real deploy.
     if deployed:
         image_changed = bool(await run("git", "diff", "--name-only", deployed, tree, "--", "Dockerfile"))
-        code_changes = not await is_ancestor(head, deployed)
+        worker_changed = bool(await run("git", "diff", "--name-only", deployed, head, "--", "worker"))
+        head_deployed = await is_ancestor(head, deployed)
     else:
-        image_changed = code_changes = True
+        image_changed = worker_changed = True
+        head_deployed = False
     tag, tag_commit = await latest_release(name)
     other = [line[3:] for line in (await run("git", "status", "--porcelain", "--untracked-files=all")).splitlines()]
     return {
@@ -168,7 +168,8 @@ async def state(name, dockerfile):
         "upstream_update": await upstream_update(branch, head),
         "deploy_branch": deploy_branch(name),
         "image_changed": image_changed,
-        "code_changes": code_changes,
+        "worker_changed": worker_changed,
+        "head_deployed": head_deployed,
         "released": deployed is not None and tag_commit == deployed,
         "other_changes": [path for path in other if not path.startswith("endpoints/")],
         "release": tag,
@@ -183,8 +184,8 @@ async def release(name, dockerfile):
     """Commit and push cloud/<name> if anything changed, then create the release (with gh) or return a prefilled release page URL."""
     s = await state(name, dockerfile)
     commit = s["deployed"]
-    if s["image_changed"] or s["code_changes"]:
-        parents = ([s["deployed"]] if s["deployed"] else []) + ([s["head"]] if s["code_changes"] else [])
+    if s["image_changed"] or s["worker_changed"]:
+        parents = ([s["deployed"]] if s["deployed"] else []) + ([] if s["head_deployed"] else [s["head"]])
         message = f"Deploy {name} from {s['branch']} {s['head'][:7]}"
         commit = await run("git", "commit-tree", s["tree"], *(arg for parent in parents for arg in ("-p", parent)), "-m", message)
         # Pushing to the URL, not the remote name, keeps git from also updating refs/remotes/origin/ (see deployed_commit).
@@ -199,19 +200,14 @@ async def release(name, dockerfile):
     return {"tag": tag, "published": False, "url": url}
 
 
-async def update(name):
-    """Fast-forward the current branch from upstream, push it to origin, then deploy and release the endpoint."""
+async def update():
+    """Fast-forward the current branch from upstream and push it to origin. Deploying is up to the endpoint status."""
     branch = await run("git", "rev-parse", "--abbrev-ref", "HEAD")
     try:
         await run("git", "pull", "-q", "--ff-only", "upstream", branch)
     except GitError as e:
         raise GitError(f"{str(e).splitlines()[-1]} Pull by hand: git pull upstream {branch}") from None
     await run("git", "push", "-q", "origin", branch)
-    # The pulled code may generate a different Dockerfile than the one this (not yet restarted) process would.
-    await asyncio.to_thread(subprocess.run, [sys.executable, os.path.join(PLUGIN_DIR, "tools", "gen_dockerfile.py"), name],
-                            cwd=PLUGIN_DIR, check=True, capture_output=True)
-    with open(os.path.join(PLUGIN_DIR, "endpoints", name, "Dockerfile"), encoding="utf-8") as f:
-        return await release(name, f.read())
 
 
 def add_routes(routes, manifests):
@@ -267,13 +263,11 @@ def add_routes(routes, manifests):
 
     @routes.post("/cloud/update")
     async def post_update(request):
-        name, _ = endpoint(request)
         if lock.locked():
             return web.json_response({"error": "A release is already in progress"}, status=409)
         async with lock:
             try:
-                return web.json_response(await update(name))
+                await update()
             except (GitError, asyncio.TimeoutError) as e:
                 return web.json_response({"error": str(e)}, status=500)
-            except subprocess.CalledProcessError as e:
-                return web.json_response({"error": f"Pulled the update, but generating the Dockerfile failed: {e.stderr.decode(errors='replace').strip()}"}, status=500)
+        return web.json_response({})

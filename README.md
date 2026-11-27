@@ -28,7 +28,7 @@ git push -u origin main
 pip install -r requirements.txt
 ```
 
-To get plugin updates later, press **Update plugin** in the Cloud tab when it shows one, then restart ComfyUI. It pulls from `upstream`, pushes to your repository and releases the selected endpoint. By hand: `git pull upstream main`, then `git push`. A public fork works too: clone your fork instead and skip the remote commands.
+To get plugin updates later, press **Update plugin** in the Cloud tab when it shows one, then restart ComfyUI. It pulls from `upstream` and pushes to your repository, but doesn't deploy: most updates only change the GUI and the local side. If an update changes what runs in the cloud, the Cloud tab says so for each endpoint, and you deploy as usual. By hand: `git pull upstream main`, then `git push`. A public fork works too: clone your fork instead and skip the remote commands.
 
 ### 2. Credentials
 
@@ -72,7 +72,7 @@ Open the **Cloud** tab in the sidebar, or **Manage endpoints…** in the Cloud b
 - create new endpoints, e.g. one for Flux and one for MiniMax H3, each with its own models and GPU. For a new endpoint, deploy it, then create a RunPod endpoint for its branch, as in setup step 4.
 
 Changes are saved to the endpoint's folder in this repo, `endpoints/<name>/`. To update an endpoint's image, select it and press **Deploy & release** at the bottom of the tab:
-1. It commits the endpoint's Dockerfile and manifest, together with the plugin code of your current branch, to the branch `cloud/<name>`, and pushes that branch.
+1. It commits the endpoint's Dockerfile and manifest, together with the worker code of your current branch, to the branch `cloud/<name>`, and pushes that branch.
 2. It creates the endpoint's next GitHub release, e.g. `flux-v0.1.3`, which makes RunPod rebuild.
 
 To undo changes you haven't deployed yet, press **Discard changes, back to `<release>`**. It resets the models, node packs, pip packages and ComfyUI version to the latest release and keeps the endpoint ID and ComfyUI options.

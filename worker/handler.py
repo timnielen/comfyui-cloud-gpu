@@ -34,7 +34,7 @@ import aiohttp
 import boto3
 import runpod
 
-COMFY_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+COMFY_DIR = "/comfyui"  # set up by the Dockerfile
 COMFY_URL = "http://127.0.0.1:8188"
 DIRS = {kind: os.path.join(COMFY_DIR, kind) for kind in ("input", "output", "temp", "models", "custom_nodes")}
 BATCH_SECONDS = 0.5
