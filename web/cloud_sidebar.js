@@ -38,6 +38,11 @@ function toast(detail, severity = "info") {
 
 async function request(route, method, body) {
   const r = await api.fetchApi(route, { method, headers: JSON_HEADERS, body: body && JSON.stringify(body) });
+  if (!r.headers.get("Content-Type")?.includes("application/json")) {
+    // The browser loads new plugin JavaScript on reload, the server only loads new routes on restart.
+    if (r.status === 404 || r.status === 405) throw new Error(`The server doesn't know ${route.split("?")[0]} yet. Restart ComfyUI to finish the plugin update.`);
+    throw new Error(`${r.status} ${r.statusText}: ${await r.text()}`);
+  }
   const data = await r.json();
   if (!r.ok) throw new Error(data.error?.message ? `${data.error.message}. ${data.error.details}` : data.error);
   return data;
@@ -71,7 +76,7 @@ async function loadReleaseStatus() {
   releaseStatus = null;
   if (!cloud.selected) return render();
   const r = await api.fetchApi(`/cloud/release?endpoint=${encodeURIComponent(cloud.selected)}`);
-  releaseStatus = r.ok || r.status === 500 ? await r.json() : { error: await r.text() };
+  releaseStatus = r.headers.get("Content-Type")?.includes("application/json") ? await r.json() : { error: await r.text() };
   render();
 }
 

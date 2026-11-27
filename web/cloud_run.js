@@ -136,6 +136,7 @@ api.addEventListener("status", updateRunning);
 // Endpoints that are deployed but missing here, e.g. in a fresh clone, come back from their cloud/<name> branches.
 async function restoreEndpoints() {
   const r = await api.fetchApi("/cloud/endpoints/restore", { method: "POST" });
+  if (!r.headers.get("Content-Type")?.includes("application/json")) return;  // plugin updated, ComfyUI not restarted yet
   const { restored, error } = await r.json();
   if (error) return console.warn(`Cloud Run: could not restore endpoints: ${error}`);
   if (!restored.length) return;

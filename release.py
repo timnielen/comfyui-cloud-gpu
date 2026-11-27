@@ -215,7 +215,7 @@ def add_routes(routes, manifests):
     def endpoint(request):
         name = request.query.get("endpoint", "")
         if name not in manifests.endpoint_names():
-            raise web.HTTPNotFound(text=f"Unknown endpoint {name!r}")
+            raise web.HTTPNotFound(text=json.dumps({"error": f"Unknown endpoint {name!r}"}), content_type="application/json")
         return name, manifests.dockerfile(manifests.load_manifest(name))
 
     @routes.get("/cloud/release")
