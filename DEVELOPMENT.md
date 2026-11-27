@@ -53,7 +53,7 @@ The bucket is optional on each side, and each side decides independently:
 The handler doesn't use `return_aggregate_stream`. The client reads `/stream`, and aggregating inline files would store them a second time in the job's final output. RunPod documents no limit on a job's total streamed size; tested locally with a 4.3 MB output (6 chunks, largest stream item 0.8 MB).
 
 Worker details:
-- ComfyUI starts once per worker and restarts if it died.
+- ComfyUI starts with the first job, not at boot: a cold worker installs the job's runtime node packs first, so it doesn't restart for them. The job's `comfy_args` (the manifest's `comfy_args`, split with `shlex`) are added to ComfyUI's command line. ComfyUI restarts when a later job brings other `comfy_args` or new node packs, or if it died. Options the handler relies on (`--listen`, `--port`, the directory options) are rejected by `check_manifest`.
 - Inputs are downloaded before each job and deleted after it.
 - Outputs stay on disk, because a cached output node re-sends `executed` for the existing file.
 - If the generator is closed early (cancel, timeout), the handler deletes the prompt from the worker's queue and interrupts it.
@@ -61,7 +61,7 @@ Worker details:
   - downloads missing models via a `.part` file;
   - clones missing node packs into `<pack>.disabled`, which ComfyUI's loader skips, and pip-installs their requirements with torch/torchvision/torchaudio pinned to the installed versions;
   - renames each pack once installed, so a failed install never loads;
-  - restarts ComfyUI if any pack was installed.
+  - (re)starts ComfyUI if any pack was installed, while missing models download in parallel.
 
 ## Local backend
 
@@ -176,3 +176,4 @@ curl -s https://api.runpod.ai/v2/$ENDPOINT_ID/stream/<job id> -H "Authorization:
 - The `/stream` response shape `{"status", "stream": [{"output": ...}]}`: taken from the official `runpod` SDK, because the docs don't show it fully.
 - Whether RunPod's `/cancel` closes the generator, which is what triggers the worker's interrupt.
 - R2 itself: tests used moto as the S3 server.
+- That Comfy Kitchen's INT8 attention kernels load in the image (`--use-ck-attention` exits at startup if they don't), and how much the ComfyUI options speed up real workflows.

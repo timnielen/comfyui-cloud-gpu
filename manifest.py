@@ -43,6 +43,10 @@ CMD ["python", "custom_nodes/comfy_cloud_run/worker/handler.py"]
 """
 
 
+# ComfyUI options the worker sets itself: its handler talks to ComfyUI and collects files through them.
+WORKER_OPTIONS = ("--listen", "--port", "--base-directory", "--input-directory", "--output-directory", "--temp-directory")
+
+
 def git_checkout(url, commit, path):
     """Shell commands that put `url` at `commit` into `path`, which may already exist (/comfyui holds the models)."""
     url, path = shlex.quote(url), shlex.quote(path)
@@ -104,11 +108,17 @@ def check_manifest(manifest):
     for entry in manifest.get("custom_nodes", []) + manifest.get("models", []):
         if not isinstance(entry.get("runtime", False), bool):
             raise ValueError(f"runtime must be true or false in {entry!r}")
+    for model in manifest.get("models", []):
         for part in (model["directory"], model["name"]):
             if not MODEL_PATH.fullmatch(part) or ".." in part.split("/"):
                 raise ValueError(f"invalid model path {part!r}")
     if not all(isinstance(p, str) for p in manifest.get("pip", [])):
         raise ValueError("pip must be a list of strings")
+    if not isinstance(manifest.get("comfy_args", ""), str):
+        raise ValueError("comfy_args must be a string")
+    for arg in shlex.split(manifest.get("comfy_args", "")):  # ValueError on unbalanced quotes
+        if arg.split("=")[0] in WORKER_OPTIONS:
+            raise ValueError(f"{arg.split('=')[0]} is set by the worker and can't be changed")
 
 
 def endpoint_dir(name):
@@ -132,7 +142,8 @@ def save_manifest(name, manifest):
     """Write the manifest and regenerate its Dockerfile."""
     check_manifest(manifest)
     manifest = {"endpoint_id": manifest["endpoint_id"], "comfyui": manifest["comfyui"], "custom_nodes": manifest.get("custom_nodes", []),
-                "pip": manifest.get("pip", []), "models": manifest.get("models", [])}
+                "pip": manifest.get("pip", []), "models": manifest.get("models", []),
+                "comfy_args": manifest.get("comfy_args", "")}
     path = endpoint_dir(name)
     os.makedirs(path, exist_ok=True)
     with open(os.path.join(path, "manifest.json"), "w", encoding="utf-8") as f:

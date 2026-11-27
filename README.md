@@ -85,9 +85,17 @@ With the [GitHub CLI](https://cli.github.com) installed and logged in (`gh auth 
 
 Each model and node pack in the Cloud tab has an **image / runtime** switch:
 - **image** (the default): baked into the image. It's always there and costs nothing per run, but adding or changing it needs a deploy and a rebuild.
-- **runtime**: left out of the image. The worker downloads the model or installs the node pack when a job uses it, and keeps it while the worker stays warm. Changing it needs no rebuild, but every cold start that uses it pays the download or install time. Node packs also restart the worker's ComfyUI once.
+- **runtime**: left out of the image. The worker downloads the model or installs the node pack when a job uses it, and keeps it while the worker stays warm. Changing it needs no rebuild, but every cold start that uses it pays the download or install time. A warm worker restarts its ComfyUI once to load a newly installed node pack; a cold one installs it before ComfyUI starts.
 
 Runtime is handy for trying things out and for small, rarely used models or node packs. Switch them to image once you keep them. A runtime node pack's Python requirements are installed with the image's PyTorch pinned, but other dependency conflicts only show up when a job runs.
+
+### ComfyUI options
+
+The **ComfyUI options** section of the Cloud tab sets command line options for the worker's ComfyUI, e.g. `--use-ck-attention --highvram`. Type them, or pick from **Add an option…**. They're sent with every job, so a change applies to the next run without a rebuild. A warm worker restarts its ComfyUI once when they change.
+
+The most useful one is `--use-ck-attention`: Comfy Kitchen's INT8 attention, a SageAttention-style kernel that ships with ComfyUI. It speeds up video models (Wan, LTX, MiniMax H3) and large image models (Flux, Qwen Image, Z-Image), most at high resolutions and long clips. Results differ slightly from the default attention. The others in the list are smaller, situational gains or VRAM savers; each says what it does.
+
+Try one option at a time and compare speed and quality. If ComfyUI doesn't start with them, the run fails with an error naming the options, and the worker log on RunPod says why.
 
 ### Editing manifests by hand
 
@@ -99,7 +107,8 @@ Each endpoint has a manifest, `endpoints/<name>/manifest.json`, that lists what 
   "comfyui": {"url": "https://github.com/Comfy-Org/ComfyUI", "commit": "<sha>"},
   "custom_nodes": [{"url": "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite", "commit": "<sha>"}],
   "pip": ["transformers<5"],
-  "models": [{"name": "minimax_h3_audio_vae_fp32.safetensors", "directory": "vae", "url": "https://huggingface.co/..."}]
+  "models": [{"name": "minimax_h3_audio_vae_fp32.safetensors", "directory": "vae", "url": "https://huggingface.co/..."}],
+  "comfy_args": "--use-ck-attention"
 }
 ```
 

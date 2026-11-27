@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import os
+import shlex
 import time
 import uuid
 
@@ -183,6 +184,8 @@ class CloudRun:
             job_input["extra_data"] = {"extra_pnginfo": extra_data["extra_pnginfo"]}
         if "partial_execution_targets" in json_data:
             job_input["partial_execution_targets"] = json_data["partial_execution_targets"]
+        if manifest.get("comfy_args"):
+            job_input["comfy_args"] = shlex.split(manifest["comfy_args"])
         runtime = runtime_entries(prompt, manifest)
         if runtime["models"] or runtime["custom_nodes"]:
             job_input["runtime"] = runtime

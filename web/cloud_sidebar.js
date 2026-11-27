@@ -166,6 +166,36 @@ async function addNodePack(url, knownCommit) {
   }
 }
 
+// Handpicked ComfyUI options. They're sent with every job, and the worker starts ComfyUI with them, so no rebuild.
+const OPTIONS = [
+  ["--use-ck-attention", "Comfy Kitchen INT8 attention: faster video and large image models"],
+  ["--fast fp16_accumulation", "fp16 accumulation: faster fp16 models, slightly lower precision"],
+  ["--fast fp8_matrix_mult", "fp8 matrix math for fp8 models (RTX 40/50, L40, H100 and newer)"],
+  ["--fast autotune", "cuDNN autotune: faster VAEs after the first run at a size"],
+  ["--highvram", "Keep models in VRAM between runs instead of moving them to RAM"],
+  ["--fp8_e4m3fn-text-enc", "Store text encoders in fp8 to save VRAM"],
+  ["--cache-none", "Cache no node results: less RAM and VRAM, every node reruns"],
+];
+
+// Adds an option to the text, merging --fast features into one --fast: a second --fast would replace the first.
+function addOption(text, option) {
+  const tokens = text.split(/\s+/).filter(Boolean);
+  const [flag, ...values] = option.split(" ");
+  const at = tokens.indexOf(flag);
+  if (at === -1) tokens.push(flag, ...values);
+  else if (flag === "--fast" && tokens[at + 1] && !tokens[at + 1].startsWith("--") && !tokens.includes(values[0])) tokens.splice(at + 1, 0, ...values);
+  return tokens.join(" ");
+}
+
+function optionsSection(manifest) {
+  const text = input({ value: manifest.comfy_args ?? "", placeholder: "e.g. --use-ck-attention" });
+  const picker = el("select", { style: INPUT }, el("option", { value: "", textContent: "Add an option…" }),
+    ...OPTIONS.map(([value, textContent]) => el("option", { value, textContent, title: value })));
+  picker.onchange = () => { text.value = addOption(text.value, picker.value); picker.value = ""; };
+  return section("ComfyUI options", picker, row(text, button("Save", () => save((m) => { m.comfy_args = text.value.trim(); }))),
+    el("div", { style: MUTED, textContent: "Command line options for the cloud ComfyUI. They apply to the next job without a rebuild; a warm worker restarts its ComfyUI once when they change." }));
+}
+
 function endpointSection() {
   if (creating) {
     const name = input({ placeholder: "name, e.g. flux" });
@@ -182,7 +212,7 @@ function endpointSection() {
       await Promise.all([checkWorkflow(), loadReleaseStatus()]);
     };
     return section("New endpoint", name,
-      el("label", { style: `${MUTED}; display: flex; gap: 6px; align-items: center` }, copy, `Copy models and nodes from ${cloud.selected ?? "–"}`),
+      el("label", { style: `${MUTED}; display: flex; gap: 6px; align-items: center` }, copy, `Copy models, nodes and ComfyUI options from ${cloud.selected ?? "–"}`),
       row(button("Create", create), button("Cancel", () => { creating = false; render(); }, "textonly")));
   }
   const choice = select(cloud.endpoints.map((e) => e.name), cloud.selected);
@@ -318,7 +348,7 @@ function render() {
   const manifest = cloud.manifest;
   const content = [endpointSection()];
   if (manifest && !creating) {
-    content.push(runpodSection(cloud.selected, manifest), workflowSection(), modelsSection(manifest), nodePacksSection(manifest), bucketSection(), releaseSection());
+    content.push(runpodSection(cloud.selected, manifest), workflowSection(), modelsSection(manifest), nodePacksSection(manifest), optionsSection(manifest), bucketSection(), releaseSection());
   }
   root.replaceChildren(el("div", { style: "display: flex; flex-direction: column; height: 100%; overflow-y: auto" }, ...content));
 }

@@ -51,21 +51,27 @@ if any(os.environ.get(k) for k in BUCKET_KEYS):
                       aws_secret_access_key=os.environ["BUCKET_SECRET"])
 else:
     BUCKET = s3 = None  # outputs are streamed inline
-comfy = None
+comfy = None  # the ComfyUI process, started by the first job
+comfy_args = None  # the options it was started with
 
 
-def start_comfy():
-    global comfy
-    comfy = subprocess.Popen([sys.executable, "main.py", "--listen", "127.0.0.1", "--port", "8188", "--disable-auto-launch"], cwd=COMFY_DIR)
+def start_comfy(args):
+    global comfy, comfy_args
+    if comfy is not None and comfy.poll() is None:
+        print("handler - restarting ComfyUI")
+        comfy.terminate()
+        comfy.wait()
+    elif comfy is not None:
+        print(f"handler - ComfyUI exited with code {comfy.returncode}, restarting")
+    comfy = subprocess.Popen([sys.executable, "main.py", "--listen", "127.0.0.1", "--port", "8188", "--disable-auto-launch", *args], cwd=COMFY_DIR)
+    comfy_args = args
 
 
 async def wait_for_comfy(session):
-    if comfy.poll() is not None:
-        print(f"handler - ComfyUI exited with code {comfy.returncode}, restarting")
-        start_comfy()
     while True:
         if comfy.poll() is not None:
-            raise RuntimeError(f"ComfyUI exited with code {comfy.returncode} during startup")
+            options = f" with the endpoint's ComfyUI options {' '.join(comfy_args)}" if comfy_args else ""
+            raise RuntimeError(f"ComfyUI exited with code {comfy.returncode} during startup{options}. The worker log on RunPod shows why.")
         try:
             async with session.get(COMFY_URL + "/system_stats") as r:
                 if r.status == 200:
@@ -128,27 +134,30 @@ async def install_node_pack(node, constraints):
     return True
 
 
-async def prepare_runtime(session, runtime):
-    """Download missing runtime models and install missing runtime node packs, restarting ComfyUI for new packs."""
-    for model in runtime.get("models", []):
-        path = local_path("models", model["directory"], model["name"])
-        if not os.path.exists(path):
-            print(f"handler - downloading runtime model {model['directory']}/{model['name']}")
-            await download(session, model["url"], path)
-    if not runtime.get("custom_nodes"):
-        return
-    with tempfile.NamedTemporaryFile("w", suffix=".txt") as constraints:
-        # A pack's requirements must not replace the image's PyTorch build.
-        pinned = [d for d in importlib.metadata.distributions() if d.metadata["Name"] in ("torch", "torchvision", "torchaudio")]
-        constraints.write("".join(f"{d.metadata['Name']}=={d.version}\n" for d in pinned))
-        constraints.flush()
-        installed = [await install_node_pack(node, constraints.name) for node in runtime["custom_nodes"]]
-    if any(installed):
-        print("handler - restarting ComfyUI to load the new node packs")
-        comfy.terminate()
-        await asyncio.to_thread(comfy.wait)
-        start_comfy()
-        await wait_for_comfy(session)
+async def download_model(session, model):
+    path = local_path("models", model["directory"], model["name"])
+    if not os.path.exists(path):
+        print(f"handler - downloading runtime model {model['directory']}/{model['name']}")
+        await download(session, model["url"], path)
+
+
+async def prepare(session, runtime, args):
+    """Install the job's missing runtime node packs, then (re)start ComfyUI if it isn't running with them and `args` yet.
+
+    ComfyUI loads node packs only at startup, so a cold worker installs them before its first start instead of restarting.
+    Runtime models are found without a restart; they download while ComfyUI starts.
+    """
+    installed = False
+    if runtime.get("custom_nodes"):
+        with tempfile.NamedTemporaryFile("w", suffix=".txt") as constraints:
+            # A pack's requirements must not replace the image's PyTorch build.
+            pinned = [d for d in importlib.metadata.distributions() if d.metadata["Name"] in ("torch", "torchvision", "torchaudio")]
+            constraints.write("".join(f"{d.metadata['Name']}=={d.version}\n" for d in pinned))
+            constraints.flush()
+            installed = any([await install_node_pack(node, constraints.name) for node in runtime["custom_nodes"]])
+    if comfy is None or comfy.poll() is not None or installed or args != comfy_args:
+        await asyncio.to_thread(start_comfy, args)
+    await asyncio.gather(wait_for_comfy(session), *(download_model(session, model) for model in runtime.get("models", [])))
 
 
 def upload(prompt_id, file):
@@ -236,8 +245,7 @@ async def run_prompt(session, prompt_id, body):
 async def handler(job):
     inp = job["input"]
     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=None, sock_connect=30)) as session:
-        await wait_for_comfy(session)
-        await prepare_runtime(session, inp.get("runtime", {}))
+        await prepare(session, inp.get("runtime", {}), inp.get("comfy_args", []))
         inputs = [local_path("input", "", item["path"]) for item in inp.get("inputs", [])]
         try:
             for item, path in zip(inp.get("inputs", []), inputs):
@@ -257,6 +265,6 @@ async def handler(job):
 
 
 if __name__ == "__main__":
-    start_comfy()
+    # ComfyUI starts with the first job, which says which node packs and options it needs.
     # No return_aggregate_stream: the client reads /stream, and aggregating inline output files would store them twice.
     runpod.serverless.start({"handler": handler})
